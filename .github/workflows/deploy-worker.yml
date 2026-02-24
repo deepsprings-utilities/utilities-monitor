@@ -1,6 +1,6 @@
 name: Deploy Cloudflare Worker
 
-  on:
+on:
     push:
       branches: [main, acquisuite-ingest]
 
