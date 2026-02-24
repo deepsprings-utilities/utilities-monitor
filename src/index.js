@@ -1,11 +1,15 @@
 /**
- * Welcome to Cloudflare Workers! This is your first worker.
+ * AcquiSuite ingest worker
  *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
+ * This worker is used to ingest data from AcquiSuite into a Cloudflare R2 bucket.
  *
- * Learn more at https://developers.cloudflare.com/workers/
+ * It is configured by `wrangler.jsonc`.
+ *
+ * ## Deploy locally (Wrangler)
+ *
+ * ```bash
+ * npm install
+ * wrangler login
  */
 
 export default {
