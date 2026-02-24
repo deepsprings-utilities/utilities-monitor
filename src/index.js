@@ -69,7 +69,6 @@ export default {
     const dd = String(now.getUTCDate()).padStart(2, "0");
 
     const safeSerial = safeKey(serial);
-    const safeName = safeKey(filePart.filename || `acq_${Date.now()}.log.gz`);
 
     // Store extracted .log.gz under log-gz/...
     const objectKey = `log-gz/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
