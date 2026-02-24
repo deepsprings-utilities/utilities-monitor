@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "acquisuite-ingest",
+	"name": "utilities-monitor",
 	"main": "src/index.js",
 	"compatibility_date": "2026-02-23",
 	"observability": {
