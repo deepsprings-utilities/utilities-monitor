@@ -50,10 +50,10 @@ export default {
     const bodyBuf = await request.arrayBuffer();
     const body = new Uint8Array(bodyBuf);
 
-    // Extract LOGFILE bytes
-    const filePart = extractMultipartFilePart(body, boundary, "LOGFILE");
-    if (!filePart) {
-      // If AcquiSuite sends metadata-only (or a test post), don't fail the connection
+    // Extract all file parts (e.g. .log.gz and status.txt) so nothing is dropped.
+    const fileParts = extractAllMultipartFileParts(body, boundary);
+    if (!fileParts.length) {
+      // Metadata-only or unexpected format; don't fail the connection.
       return successAck();
     }
 
@@ -69,15 +69,32 @@ export default {
     const dd = String(now.getUTCDate()).padStart(2, "0");
 
     const safeSerial = safeKey(serial);
-    const safeName = safeKey(filePart.filename || `acq_${Date.now()}.log.gz`);
 
-    // Store extracted .log.gz under log-gz/...
-    const objectKey = `log-gz/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
+    for (const part of fileParts) {
+      const kind = classifyMultipartFilePart(part);
+      const prefix =
+        kind === "log" ? "log-gz" : kind === "status" ? "status" : "other";
 
-    await env.BUCKET.put(objectKey, filePart.fileBytes, {
-      httpMetadata: { contentType: "application/gzip" },
-      customMetadata: { serial, filetime, loopname, source: "acquisuite" },
-    });
+      const rawName =
+        part.filename ||
+        `${part.fieldName || "part"}_${Date.now().toString(36)}.bin`;
+      const safeName = safeKey(rawName);
+
+      const objectKey = `${prefix}/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
+      const contentType = inferContentTypeForPart(part, kind);
+
+      await env.BUCKET.put(objectKey, part.fileBytes, {
+        httpMetadata: { contentType },
+        customMetadata: {
+          serial,
+          filetime,
+          loopname,
+          source: "acquisuite",
+          fieldName: part.fieldName || "",
+          originalFilename: part.filename || "",
+        },
+      });
+    }
 
     return successAck();
   },
@@ -147,6 +164,58 @@ function extractMultipartFilePart(bodyU8, boundary, fieldName) {
   return { filename, fileBytes };
 }
 
+/**
+ * Extract all file parts (with a filename) from multipart/form-data.
+ * Returns an array of { fieldName, filename, fileBytes }.
+ */
+function extractAllMultipartFileParts(bodyU8, boundary) {
+  const parts = [];
+  const delimBytes = enc(`--${boundary}`);
+  const headerEndMarker = enc("\r\n\r\n");
+  let searchFrom = 0;
+
+  while (true) {
+    const partStart = indexOfSubarray(bodyU8, delimBytes, searchFrom);
+    if (partStart === -1) break;
+
+    let afterBoundary = partStart + delimBytes.length;
+    // Check for closing boundary ("--")
+    if (bodyU8[afterBoundary] === 45 && bodyU8[afterBoundary + 1] === 45) {
+      break;
+    }
+
+    const headersStart = skipCRLF(bodyU8, afterBoundary);
+    const headersEnd = indexOfSubarray(bodyU8, headerEndMarker, headersStart);
+    if (headersEnd === -1) break;
+
+    const headersText = dec(bodyU8.slice(headersStart, headersEnd));
+
+    const nameMatch = headersText.match(/name="([^"]+)"/i);
+    const fieldName = nameMatch && nameMatch[1] ? nameMatch[1] : "";
+
+    let filename = "";
+    const fnMatch = headersText.match(/filename="([^"]+)"/i);
+    if (fnMatch && fnMatch[1]) filename = fnMatch[1].split("/").pop();
+
+    const contentStart = headersEnd + headerEndMarker.length;
+    const nextBoundaryNeedle = enc(`\r\n--${boundary}`);
+    let contentEnd = indexOfSubarray(bodyU8, nextBoundaryNeedle, contentStart);
+    if (contentEnd === -1) {
+      contentEnd = bodyU8.length;
+    }
+
+    const fileBytes = bodyU8.slice(contentStart, contentEnd);
+
+    if (filename) {
+      parts.push({ fieldName, filename, fileBytes });
+    }
+
+    searchFrom = contentEnd;
+  }
+
+  return parts;
+}
+
 function extractMultipartTextField(bodyU8, boundary, fieldName) {
   const headerNeedle = enc(`name="${fieldName}"`);
   const namePos = indexOfSubarray(bodyU8, headerNeedle, 0);
@@ -174,6 +243,41 @@ function extractMultipartTextField(bodyU8, boundary, fieldName) {
 
 function safeKey(s) {
   return String(s || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180);
+}
+
+function classifyMultipartFilePart(part) {
+  const name = (part.fieldName || "").toLowerCase();
+  const filename = (part.filename || "").toLowerCase();
+
+  if (name === "logfile" || /\.log(\.gz|\.gzip)?$/.test(filename)) {
+    return "log";
+  }
+
+  if (name.includes("status") || filename.includes("status") || filename.endsWith(".txt")) {
+    return "status";
+  }
+
+  return "other";
+}
+
+function inferContentTypeForPart(part, kind) {
+  const filename = (part.filename || "").toLowerCase();
+
+  if (kind === "log") {
+    if (filename.endsWith(".gz") || filename.endsWith(".gzip")) {
+      return "application/gzip";
+    }
+    return "application/octet-stream";
+  }
+
+  if (kind === "status") {
+    if (filename.endsWith(".txt")) {
+      return "text/plain";
+    }
+    return "text/plain";
+  }
+
+  return "application/octet-stream";
 }
 
 function enc(s) { return new TextEncoder().encode(s); }
