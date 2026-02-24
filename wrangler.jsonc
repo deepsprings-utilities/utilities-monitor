@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "projects",
+	"name": "acquisuite-ingest",
 	"main": "src/index.js",
 	"compatibility_date": "2026-02-23",
 	"observability": {
