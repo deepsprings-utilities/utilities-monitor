@@ -44,16 +44,17 @@ export default {
       // Some devices send odd content-type; don't brick the connection
       return successAck();
     }
-    const boundary = m[1];
+    const boundary = trimBoundary(m[1]);
 
     // Read entire request (AcquiSuite uploads are usually small)
     const bodyBuf = await request.arrayBuffer();
     const body = new Uint8Array(bodyBuf);
 
-    // Extract all file parts (e.g. .log.gz and status.txt) so nothing is dropped.
+    // Bulletproof: always store primary LOGFILE first (some clients send it without filename in part).
+    const primaryLogPart = extractMultipartFilePart(body, boundary, "LOGFILE");
     const fileParts = extractAllMultipartFileParts(body, boundary);
-    if (!fileParts.length) {
-      // Metadata-only or unexpected format; don't fail the connection.
+
+    if (!primaryLogPart && !fileParts.length) {
       return successAck();
     }
 
@@ -69,31 +70,52 @@ export default {
     const dd = String(now.getUTCDate()).padStart(2, "0");
 
     const safeSerial = safeKey(serial);
+    const meta = truncateMetadata({ serial, filetime, loopname });
 
-    for (const part of fileParts) {
-      const kind = classifyMultipartFilePart(part);
-      const prefix =
-        kind === "log" ? "log-gz" : kind === "status" ? "status" : "other";
+    const putOne = async (objectKey, bytes, contentType, customMeta) => {
+      try {
+        await env.BUCKET.put(objectKey, bytes, {
+          httpMetadata: { contentType },
+          customMetadata: customMeta,
+        });
+      } catch (err) {
+        throw new Error(`R2 put failed: ${objectKey} - ${err?.message || String(err)}`);
+      }
+    };
 
-      const rawName =
-        part.filename ||
-        `${part.fieldName || "part"}_${Date.now().toString(36)}.bin`;
-      const safeName = safeKey(rawName);
+    try {
+      if (primaryLogPart) {
+        const primaryName = safeKey(primaryLogPart.filename || `acq_${Date.now()}.log.gz`);
+        const primaryKey = `log-gz/${safeSerial}/${yyyy}/${mm}/${dd}/${primaryName}`;
+        await putOne(primaryKey, primaryLogPart.fileBytes, "application/gzip", meta);
+      }
 
-      const objectKey = `${prefix}/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
-      const contentType = inferContentTypeForPart(part, kind);
+      for (const part of fileParts) {
+        if (
+          primaryLogPart &&
+          (part.fieldName || "").toLowerCase() === "logfile" &&
+          part.filename === (primaryLogPart.filename || "")
+        ) {
+          continue;
+        }
 
-      await env.BUCKET.put(objectKey, part.fileBytes, {
-        httpMetadata: { contentType },
-        customMetadata: {
-          serial,
-          filetime,
-          loopname,
-          source: "acquisuite",
-          fieldName: part.fieldName || "",
-          originalFilename: part.filename || "",
-        },
-      });
+        const kind = classifyMultipartFilePart(part);
+        const prefix =
+          kind === "log" ? "log-gz" : kind === "status" ? "status" : "other";
+
+        const rawName =
+          part.filename ||
+          `${part.fieldName || "part"}_${Date.now().toString(36)}.bin`;
+        const safeName = safeKey(rawName);
+
+        const objectKey = `${prefix}/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
+        const contentType = inferContentTypeForPart(part, kind);
+
+        const partMeta = { ...meta, fieldName: (part.fieldName || "").slice(0, 200), originalFilename: (part.filename || "").slice(0, 200) };
+        await putOne(objectKey, part.fileBytes, contentType, partMeta);
+      }
+    } catch (err) {
+      return text(`STORAGE_ERROR: ${err?.message || String(err)}`, 500);
     }
 
     return successAck();
@@ -243,6 +265,26 @@ function extractMultipartTextField(bodyU8, boundary, fieldName) {
 
 function safeKey(s) {
   return String(s || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180);
+}
+
+/** Strip optional quotes and whitespace from boundary (some clients send boundary="..."). */
+function trimBoundary(b) {
+  const s = String(b || "").trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1).trim();
+  }
+  return s;
+}
+
+/** Keep R2 customMetadata under 2KB total; truncate long values. */
+function truncateMetadata(obj) {
+  const max = 500;
+  return {
+    serial: String(obj.serial ?? "").slice(0, max),
+    filetime: String(obj.filetime ?? "").slice(0, max),
+    loopname: String(obj.loopname ?? "").slice(0, max),
+    source: "acquisuite",
+  };
 }
 
 function classifyMultipartFilePart(part) {
