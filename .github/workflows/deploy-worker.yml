@@ -21,10 +21,8 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: projects/package-lock.json
 
       - name: Install dependencies
-        working-directory: projects
         run: npm ci
 
       - name: Deploy
@@ -32,5 +30,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: projects
           command: deploy
