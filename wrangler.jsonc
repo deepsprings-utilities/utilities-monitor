@@ -12,6 +12,9 @@
 	},
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"r2_buckets": [
+		{ "binding": "BUCKET", "bucket_name": "ds-acquisuite-raw" }
 	]
 	/**
 	 * Smart Placement
