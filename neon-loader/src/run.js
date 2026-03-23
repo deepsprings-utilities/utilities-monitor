@@ -78,6 +78,13 @@ async function main() {
 
         await insertRawRecords(client, fileId, parsed.rawRecords, label);
         if (label.hasData) {
+          const tallWithTs = parsed.tallRows.filter((r) => r.recordTs).length;
+          if (parsed.tallRows.length > 0 && tallWithTs === 0) {
+            const sample = parsed.rawRecords[0]?.parsedJson || {};
+            console.warn(
+              `warning key=${object.key} device=${label.deviceAddress} parsed ${parsed.tallRows.length} tall rows but none had record_ts; check time column sample=${JSON.stringify(sample)}`,
+            );
+          }
           await insertTallRows(client, fileId, serial, parsed.tallRows, label);
         }
         await markProcessed(client, { r2Key: object.key, etag, runId });

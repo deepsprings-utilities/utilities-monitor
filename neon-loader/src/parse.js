@@ -1,6 +1,7 @@
 import { gunzipSync } from "node:zlib";
 
 const numberPattern = /^-?\d+(\.\d+)?$/;
+const numberPatternLoose = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
 const UNIT_RE = /\(([^()]*)\)\s*$/;
 const RESERVED = new Set(["time(UTC)", "error", "lowalarm", "highalarm"]);
 
@@ -12,8 +13,9 @@ export function parseGzipLog(fileBytes, options = {}) {
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length === 0) return { lineCount: 0, rawRecords: [], tallRows: [] };
 
-  const headers = splitCsvLine(lines[0]);
-  if (!headers.includes("time(UTC)")) {
+  const headers = splitCsvLine(lines[0]).map(normalizeCsvHeader);
+  const timeCol = findTimeColumnHeader(headers);
+  if (!timeCol) {
     const loose = parseLooseLines(lines);
     return { ...loose, measurableHeaders: [] };
   }
@@ -35,7 +37,7 @@ export function parseGzipLog(fileBytes, options = {}) {
     const cols = splitCsvLine(rawText);
     if (cols.length === 0) continue;
     const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] ?? ""]));
-    const recordTs = parseUtcTime(row["time(UTC)"]);
+    const recordTs = parseUtcTime(row[timeCol]);
     const errorFlag = parseBooleanFlag(row.error);
     const lowAlarm = parseBooleanFlag(row.lowalarm);
     const highAlarm = parseBooleanFlag(row.highalarm);
@@ -320,9 +322,35 @@ export function parseUtcTime(value) {
   const s = String(value).trim();
   if (!s) return null;
 
-  // YYYY-MM-DD HH:MM:SS[.fff] (no timezone) → AcquiSuite `time(UTC)`; must be UTC, not local.
-  // (Plain `new Date("2026-02-23 14:30:00")` is treated as local time in V8.)
-  let m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/);
+  // ISO / RFC3339 with explicit Z or offset (trust Date parser)
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  // YYYY-M-D H:M:S[.fff] — AcquiSuite often omits leading zeros on hour/month/day.
+  // Treat as UTC because the column is named time(UTC).
+  let m = s.match(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})(\.\d+)?$/,
+  );
+  if (m) {
+    const [, y, mo, d, h, mi, sec, frac] = m;
+    const ms = frac ? Number(frac) * 1000 : 0;
+    const t = Date.UTC(
+      Number(y),
+      Number(mo) - 1,
+      Number(d),
+      Number(h),
+      Number(mi),
+      Number(sec),
+      ms,
+    );
+    const out = new Date(t);
+    if (!Number.isNaN(out.getTime())) return out.toISOString();
+  }
+
+  // YYYY-MM-DD HH:MM:SS[.fff] (padded) without TZ → UTC
+  m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/);
   if (m) {
     const d = new Date(`${m[1]}T${m[2]}${m[3] || ""}Z`);
     if (!Number.isNaN(d.getTime())) return d.toISOString();
@@ -336,6 +364,14 @@ export function parseUtcTime(value) {
   if (m) {
     const [, mo, day, y, h, mi, sec] = m;
     d = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(day), Number(h), Number(mi), Number(sec)));
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  // Unix epoch seconds or ms (pure digits)
+  if (/^\d{10,13}$/.test(s)) {
+    const n = Number(s);
+    const ms = s.length <= 10 ? n * 1000 : n;
+    d = new Date(ms);
     if (!Number.isNaN(d.getTime())) return d.toISOString();
   }
 
@@ -354,8 +390,28 @@ function stripBom(text) {
   return String(text).replace(/^\uFEFF/, "");
 }
 
+function normalizeCsvHeader(h) {
+  return stripBom(String(h || "").trim()).replace(/^"|"$/g, "");
+}
+
+function findTimeColumnHeader(headers) {
+  const list = headers || [];
+  const exact = list.find((h) => h === "time(UTC)");
+  if (exact) return exact;
+  const lower = list.map((h) => h.toLowerCase());
+  let idx = lower.findIndex((h) => h === "time(utc)" || h === "time (utc)");
+  if (idx >= 0) return list[idx];
+  idx = lower.findIndex((h) => h.includes("time") && h.includes("utc"));
+  if (idx >= 0) return list[idx];
+  return null;
+}
+
 function coerceValue(value) {
-  if (!value) return "";
-  if (numberPattern.test(value)) return Number(value);
-  return value;
+  if (value === undefined || value === null) return "";
+  const s = String(value).trim();
+  if (s === "") return "";
+  if (numberPattern.test(s)) return Number(s);
+  // Do not use parseFloat() on arbitrary strings — e.g. parseFloat("2026-03-20T...") === 2026.
+  if (numberPatternLoose.test(s)) return Number(s);
+  return s;
 }

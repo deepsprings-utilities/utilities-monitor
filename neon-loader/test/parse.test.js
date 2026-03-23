@@ -38,3 +38,10 @@ test("parseUtcTime handles AcquiSuite space-separated UTC timestamps", () => {
     "2026-02-23T14:30:00.000Z",
   );
 });
+
+test("parseUtcTime handles single-digit hour (common in exports)", () => {
+  assert.equal(
+    parseUtcTime("2026-02-23 9:05:07"),
+    "2026-02-23T09:05:07.000Z",
+  );
+});
