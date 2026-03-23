@@ -1,0 +1,126 @@
+{
+  "labels": {
+    "001": {
+      "labelName": "E3 Site Total Power",
+      "deviceAddress": "mb-001",
+      "physicalGroup": "electrical_grid",
+      "schemaId": "power_pulse_v1"
+    },
+    "002": {
+      "labelName": "ModHopper Wireless Transceiver #2",
+      "deviceAddress": "mb-002",
+      "physicalGroup": "modhopper_status",
+      "schemaId": "status_only_v1",
+      "hasData": false
+    },
+    "003": {
+      "labelName": "F3 and P2 Booster Pump Flex IO",
+      "deviceAddress": "mb-003",
+      "physicalGroup": "hydro_plant",
+      "schemaId": "booster_flex_v1"
+    },
+    "004": {
+      "labelName": "E1 Booster Pump Power Meter",
+      "deviceAddress": "mb-004",
+      "physicalGroup": "electrical_grid",
+      "schemaId": "wattnode_64_v1"
+    },
+    "005": {
+      "labelName": "E4 and E5 Solar and Hydro Plant Power",
+      "deviceAddress": "mb-005",
+      "physicalGroup": "solar_field",
+      "schemaId": "solar_hydro_pulse_v1"
+    },
+    "006": {
+      "labelName": "F1 F2 and P1 Hydro Plant Flex IO",
+      "deviceAddress": "mb-006",
+      "physicalGroup": "hydro_plant",
+      "schemaId": "hydro_flex_v1"
+    },
+    "007": {
+      "labelName": "Deep Well ModHopper Transceiver",
+      "deviceAddress": "mb-007",
+      "physicalGroup": "modhopper_status",
+      "schemaId": "status_only_v1",
+      "hasData": false
+    },
+    "008": {
+      "labelName": "F4 T1 and T2 Deep Well Pump Flex IO",
+      "deviceAddress": "mb-008",
+      "physicalGroup": "deep_well",
+      "schemaId": "deep_well_flex_v1"
+    },
+    "009": {
+      "labelName": "E2 Deep Well Pump Power Meter",
+      "deviceAddress": "mb-009",
+      "physicalGroup": "deep_well",
+      "schemaId": "wattnode_64_v1"
+    }
+  },
+  "sourceAliases": {
+    "Hydo Plant Power": "Hydro Plant Power",
+    "F -3 Deep Well Pump Output": "F-3 Deep Well Pump Output",
+    "Bad input": "BAD INPUT"
+  },
+  "schemas": {
+    "default_v1": {
+      "expectedHeaders": [],
+      "headerAliases": {}
+    },
+    "status_only_v1": {
+      "expectedHeaders": [],
+      "headerAliases": {}
+    },
+    "power_pulse_v1": {
+      "expectedHeaders": [
+        "SCE Main Power Pulse #1",
+        "SCE Main Power Pulse #1 Demand",
+        "SCE Main Power Pulse #1 Instantaneous",
+        "SCE Main Power Pulse #1 Min",
+        "SCE Main Power Pulse #1 Max",
+        "#2 Pulse from SCE net meter",
+        "#2 Pulse from SCE net meter Demand",
+        "#2 Pulse from SCE net meter Instantaneous",
+        "#2 Pulse from SCE net meter Min",
+        "#2 Pulse from SCE net meter Max",
+        "Power from SCE Main Power Pulse #1",
+        "Power from SCE Main Power Pulse #1 Demand",
+        "Power from SCE Main Power Pulse #1 Instantaneous",
+        "Power from SCE Main Power Pulse #1 Min",
+        "Power from SCE Main Power Pulse #1 Max",
+        "Power to SCE #2 Pulse from SCE net meter",
+        "Power to SCE #2 Pulse from SCE net meter Demand",
+        "Power to SCE #2 Pulse from SCE net meter Instantaneous",
+        "Power to SCE #2 Pulse from SCE net meter Min",
+        "Power to SCE #2 Pulse from SCE net meter Max"
+      ],
+      "headerAliases": {}
+    },
+    "solar_hydro_pulse_v1": {
+      "expectedHeaders": [
+        "Solar Array Power",
+        "Solar Array Power Demand",
+        "Solar Array Power Instantaneous",
+        "Solar Array Power Min",
+        "Solar Array Power Max",
+        "Hydro Plant Power",
+        "Hydro Plant Power Demand",
+        "Hydro Plant Power Instantaneous",
+        "Hydro Plant Power Min",
+        "Hydro Plant Power Max",
+        "Hydo Plant Power",
+        "Hydo Plant Power Demand",
+        "Hydo Plant Power Instantaneous",
+        "Hydo Plant Power Min",
+        "Hydo Plant Power Max"
+      ],
+      "headerAliases": {
+        "hydo plant power": "Hydro Plant Power",
+        "hydo plant power demand": "Hydro Plant Power Demand",
+        "hydo plant power instantaneous": "Hydro Plant Power Instantaneous",
+        "hydo plant power min": "Hydro Plant Power Min",
+        "hydo plant power max": "Hydro Plant Power Max"
+      }
+    }
+  }
+}

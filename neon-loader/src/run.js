@@ -1,0 +1,126 @@
+import path from "node:path";
+import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
+import { isProcessed, markProcessed } from "./checkpoint.js";
+import { parseGzipLog } from "./parse.js";
+import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
+import { loadLabelMap, resolveLabel } from "./labeling.js";
+
+async function main() {
+  const runId = `${Date.now()}`;
+  const bucket = mustGetEnv("R2_BUCKET_NAME");
+  const prefix = process.env.INGEST_PREFIX || "log-gz/";
+  const maxKeys = Number(process.env.INGEST_BATCH_LIMIT || "200");
+  const dryRun = process.env.DRY_RUN === "1";
+
+  const r2 = createR2ClientFromEnv();
+  const db = createDbPoolFromEnv();
+  const labelMapConfig = await loadLabelMap();
+
+  const objects = await listR2Objects(r2, { bucket, prefix, maxKeys });
+  const stats = {
+    listed: objects.length,
+    skipped: 0,
+    succeeded: 0,
+    failed: 0,
+  };
+  console.log(`run_id=${runId} listed=${objects.length} dry_run=${dryRun}`);
+
+  for (const object of objects) {
+    const etag = object.etag || "no_etag";
+    const fileName = path.basename(object.key);
+    const label = resolveLabel(labelMapConfig, fileName);
+    const serial = serialFromKey(object.key);
+
+    try {
+      const skip = await withTransaction(db, (client) => isProcessed(client, object.key, etag));
+      if (skip) {
+        stats.skipped += 1;
+        continue;
+      }
+
+      const bytes = await getR2ObjectBytes(r2, { bucket, key: object.key });
+      const schema = (labelMapConfig.schemas || {})[label.schemaId] || {};
+      const parsed = parseGzipLog(bytes, {
+        expectedHeaders: schema.expectedHeaders || [],
+        headerAliases: schema.headerAliases || {},
+      });
+      if (!label.hasData && parsed.measurableHeaders && parsed.measurableHeaders.length > 0) {
+        const preview = parsed.measurableHeaders.slice(0, 5).join(" | ");
+        console.warn(
+          `warning key=${object.key} device=${label.deviceAddress} hasData=false but measurable headers detected: ${preview}`,
+        );
+      }
+      if (dryRun) {
+        console.log(
+          `dry_run key=${object.key} rows=${parsed.rawRecords.length} tall=${parsed.tallRows.length} label=${label.labelCode}`,
+        );
+        stats.succeeded += 1;
+        continue;
+      }
+
+      await withTransaction(db, async (client) => {
+        const fileId = await insertRawFile(client, {
+          r2Key: object.key,
+          etag,
+          serial,
+          filetime: object.lastModified ? object.lastModified.toISOString() : null,
+          loopname: null,
+          source: "acquisuite",
+          parseStatus: "parsed",
+          errorText: null,
+          deviceAddress: label.deviceAddress,
+          physicalGroup: label.physicalGroup,
+          schemaId: label.schemaId,
+        });
+
+        await insertRawRecords(client, fileId, parsed.rawRecords, label);
+        if (label.hasData) {
+          await insertTallRows(client, fileId, serial, parsed.tallRows, label);
+        }
+        await markProcessed(client, { r2Key: object.key, etag, runId });
+      });
+      stats.succeeded += 1;
+    } catch (error) {
+      stats.failed += 1;
+      console.error(`failed key=${object.key} message=${error.message}`);
+      if (!dryRun) {
+        await withTransaction(db, async (client) => {
+          await insertRawFile(client, {
+            r2Key: object.key,
+            etag,
+            serial,
+            filetime: object.lastModified ? object.lastModified.toISOString() : null,
+            loopname: null,
+            source: "acquisuite",
+            parseStatus: "error",
+            errorText: String(error.message || error),
+            deviceAddress: label.deviceAddress,
+            physicalGroup: label.physicalGroup,
+            schemaId: label.schemaId,
+          });
+        });
+      }
+    }
+  }
+
+  await db.end();
+  console.log(
+    `run_complete run_id=${runId} listed=${stats.listed} skipped=${stats.skipped} succeeded=${stats.succeeded} failed=${stats.failed}`,
+  );
+}
+
+function serialFromKey(r2Key) {
+  const parts = String(r2Key || "").split("/");
+  return parts.length >= 2 ? parts[1] : "unknown_serial";
+}
+
+function mustGetEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required env var: ${name}`);
+  return value;
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

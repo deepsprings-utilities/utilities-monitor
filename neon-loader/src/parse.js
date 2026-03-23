@@ -1,0 +1,357 @@
+import { gunzipSync } from "node:zlib";
+
+const numberPattern = /^-?\d+(\.\d+)?$/;
+const UNIT_RE = /\(([^()]*)\)\s*$/;
+const RESERVED = new Set(["time(UTC)", "error", "lowalarm", "highalarm"]);
+
+export function parseGzipLog(fileBytes, options = {}) {
+  const expectedHeaders = new Set(options.expectedHeaders || []);
+  const headerAliases = options.headerAliases || {};
+  const strictHeaders = expectedHeaders.size > 0;
+  const text = decodeFile(fileBytes);
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return { lineCount: 0, rawRecords: [], tallRows: [] };
+
+  const headers = splitCsvLine(lines[0]);
+  if (!headers.includes("time(UTC)")) {
+    const loose = parseLooseLines(lines);
+    return { ...loose, measurableHeaders: [] };
+  }
+
+  const measurableHeaders = [];
+  const headerSpecs = headers.map((h) =>
+    parseColumnSpec(h, { expectedHeaders, headerAliases, strictHeaders }),
+  );
+  headers.forEach((h, idx) => {
+    if (headerSpecs[idx] && isMeasurableHeader(h)) {
+      measurableHeaders.push(h);
+    }
+  });
+  const rawRecords = [];
+  const tallRows = [];
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const rawText = lines[i];
+    const cols = splitCsvLine(rawText);
+    if (cols.length === 0) continue;
+    const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] ?? ""]));
+    const recordTs = parseUtcTime(row["time(UTC)"]);
+    const errorFlag = parseBooleanFlag(row.error);
+    const lowAlarm = parseBooleanFlag(row.lowalarm);
+    const highAlarm = parseBooleanFlag(row.highalarm);
+
+    rawRecords.push({
+      lineNo: i + 1,
+      rawText,
+      parsedJson: row,
+      recordTs,
+    });
+
+    for (let colIdx = 0; colIdx < headers.length; colIdx += 1) {
+      const header = headers[colIdx];
+      if (RESERVED.has(header)) continue;
+      const spec = headerSpecs[colIdx];
+      if (!spec) continue;
+      const value = coerceValue(cols[colIdx] ?? "");
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      tallRows.push({
+        recordTs,
+        metricKey: spec.metric,
+        metricValue: value,
+        unit: spec.unit,
+        quality: null,
+        sourceSystem: spec.source,
+        errorFlag,
+        lowAlarm,
+        highAlarm,
+      });
+    }
+  }
+
+  return {
+    lineCount: Math.max(lines.length - 1, 0),
+    rawRecords,
+    tallRows,
+    measurableHeaders,
+  };
+}
+
+function parseLooseLines(lines) {
+  const rawRecords = [];
+  const tallRows = [];
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const lineNo = idx + 1;
+    const rawText = lines[idx];
+    const parsed = parseLine(rawText);
+    const recordTs = parsed.ts || parsed.timestamp || null;
+    rawRecords.push({ lineNo, rawText, parsedJson: parsed, recordTs });
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        tallRows.push({
+          recordTs,
+          metricKey: key,
+          metricValue: value,
+          unit: null,
+          quality: null,
+          sourceSystem: "unknown",
+          errorFlag: false,
+          lowAlarm: false,
+          highAlarm: false,
+        });
+      }
+    }
+  }
+  return { lineCount: lines.length, rawRecords, tallRows };
+}
+
+function parseLine(line) {
+  const kvPairs = line
+    .split(/[,\s]+/)
+    .map((piece) => piece.trim())
+    .filter(Boolean)
+    .filter((piece) => piece.includes("="));
+
+  if (kvPairs.length > 0) {
+    const out = {};
+    for (const pair of kvPairs) {
+      const [k, ...rest] = pair.split("=");
+      const key = (k || "").trim();
+      const val = rest.join("=").trim();
+      if (!key) continue;
+      out[key] = coerceValue(val);
+    }
+    return out;
+  }
+
+  const csv = line.split(",").map((v) => v.trim());
+  const out = {};
+  csv.forEach((value, index) => {
+    out[`col_${index + 1}`] = coerceValue(value);
+  });
+  return out;
+}
+
+function parseColumnSpec(columnName, context = {}) {
+  if (!columnName) return null;
+  const clean = String(columnName).trim();
+  if (!clean || clean === "-" || RESERVED.has(clean)) return null;
+
+  let unit = null;
+  let base = clean;
+  const unitMatch = clean.match(UNIT_RE);
+  if (unitMatch) {
+    unit = unitMatch[1].trim().replace("per minute", "/min").replace("per hour", "/hr");
+    base = clean.slice(0, unitMatch.index).trim();
+  }
+
+  const canonicalBase = canonicalizeHeader(base, context.headerAliases || {});
+  if (context.strictHeaders && !context.expectedHeaders.has(canonicalBase)) {
+    return null;
+  }
+
+  let source = normalizeSource(canonicalBase);
+  let metric = detectMetric(source, unit);
+  const phase = detectPhase(source);
+  if (phase) metric = `${metric}_${phase}`;
+
+  source = inferSystem(source);
+  return { source, metric, unit };
+}
+
+function canonicalizeHeader(header, aliases) {
+  const key = String(header || "").trim().toLowerCase();
+  const mapped = aliases[key];
+  return mapped || String(header || "").trim();
+}
+
+function normalizeSource(source) {
+  const corrections = {
+    pwer: "power",
+    curent: "current",
+    voltge: "voltage",
+    frequncy: "frequency",
+    enrgy: "energy",
+    dmand: "demand",
+    aparant: "apparent",
+    reactve: "reactive",
+    postive: "positive",
+    negtive: "negative",
+    sumation: "sum",
+    avrage: "average",
+    instntaneous: "instantaneous",
+    facotr: "factor",
+    hydo: "hydro",
+  };
+  let s = String(source || "").toLowerCase().trim().replace(/\s+/g, " ");
+  for (const [wrong, right] of Object.entries(corrections)) {
+    s = s.replaceAll(wrong, right);
+  }
+  return s;
+}
+
+function detectMetric(source, unit) {
+  const patterns = [
+    [/\bave\s*rate\b$/, "avg_rate"],
+    [/\bavg\s*rate\b$/, "avg_rate"],
+    [/\brate\b$/, "rate"],
+    [/\binstantaneous\b$/, "instantaneous"],
+    [/\bdemand\b$/, "demand"],
+    [/\bave\b$/, "avg"],
+    [/\bavg\b$/, "avg"],
+    [/\baverage\b$/, "avg"],
+    [/\bmin\b$/, "min"],
+    [/\bmax\b$/, "max"],
+    [/\btotal\b$/, "total"],
+    [/\bcount\b$/, "count"],
+    [/\blevel\b$/, "level"],
+    [/\bstatus\b$/, "status"],
+  ];
+  for (const [regex, label] of patterns) {
+    if (regex.test(source)) {
+      const quantity = inferQuantity(source, unit);
+      if (quantity && ["avg", "min", "max", "rate", "avg_rate", "instantaneous", "demand"].includes(label)) {
+        return `${quantity}_${label}`;
+      }
+      return label;
+    }
+  }
+  const quantity = inferQuantity(source, unit);
+  if (quantity === "pulse") return "pulse_total";
+  return quantity || "value";
+}
+
+function inferQuantity(source, unit) {
+  const s = String(source || "").toLowerCase();
+  const u = String(unit || "").toLowerCase();
+  if (s.includes("pressure") || u.includes("psi")) return "pressure";
+  if (s.includes("flow") || u.includes("gpm")) return "flow";
+  if (s.includes("power") || u === "kw") return "power";
+  if (s.includes("energy") || u === "kwh") return "energy";
+  if (s.includes("pulse")) return "pulse";
+  return null;
+}
+
+function detectPhase(source) {
+  const phaseMap = new Map([
+    [" a-b", "AB"],
+    [" b-c", "BC"],
+    [" a-c", "AC"],
+    [" a", "A"],
+    [" b", "B"],
+    [" c", "C"],
+    [" sum", "sum"],
+    [" total", "sum"],
+    [" ave", "avg"],
+    [" average", "avg"],
+  ]);
+  for (const [key, value] of phaseMap.entries()) {
+    if (source.includes(key)) return value;
+  }
+  return null;
+}
+
+function isMeasurableHeader(header) {
+  const h = String(header || "").toLowerCase();
+  return (
+    h.includes("pulse") ||
+    h.includes("power") ||
+    h.includes("flow") ||
+    h.includes("pressure") ||
+    h.includes("energy")
+  );
+}
+
+function inferSystem(source) {
+  const mapping = {
+    "wyman creek": "hydro_plant",
+    "reservoir by-pass": "hydro_plant",
+    bypass: "hydro_plant",
+    "deep well pump": "deep_well",
+    "booster pump": "hydro_plant",
+    sce: "electrical_grid",
+    "net meter": "electrical_grid",
+    hydro: "hydro_plant",
+    solar: "solar_field",
+    modhopper: "modhopper_status",
+  };
+  for (const [key, value] of Object.entries(mapping)) {
+    if (source.includes(key)) return value;
+  }
+  return "unknown";
+}
+
+function splitCsvLine(line) {
+  const out = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current.trim());
+  return out;
+}
+
+function parseBooleanFlag(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n !== 0;
+}
+
+/**
+ * AcquiSuite CSVs often use `time(UTC)` like `2026-02-23 14:30:00` (space, no Z).
+ * Without a T/Z, `new Date()` can be invalid or local-dependent; normalize to UTC ISO.
+ */
+export function parseUtcTime(value) {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+
+  // YYYY-MM-DD HH:MM:SS[.fff] (no timezone) → AcquiSuite `time(UTC)`; must be UTC, not local.
+  // (Plain `new Date("2026-02-23 14:30:00")` is treated as local time in V8.)
+  let m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/);
+  if (m) {
+    const d = new Date(`${m[1]}T${m[2]}${m[3] || ""}Z`);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  let d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString();
+
+  // MM/DD/YYYY HH:MM:SS
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/);
+  if (m) {
+    const [, mo, day, y, h, mi, sec] = m;
+    d = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(day), Number(h), Number(mi), Number(sec)));
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  return null;
+}
+
+function decodeFile(fileBytes) {
+  try {
+    return gunzipSync(Buffer.from(fileBytes)).toString("utf8");
+  } catch {
+    return Buffer.from(fileBytes).toString("utf8");
+  }
+}
+
+function coerceValue(value) {
+  if (!value) return "";
+  if (numberPattern.test(value)) return Number(value);
+  return value;
+}
