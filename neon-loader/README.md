@@ -30,6 +30,7 @@ Each device entry should include:
   - `INGEST_BATCH_LIMIT` (default: `200`)
   - `LABEL_MAP_PATH` (default: `./label-map.json`)
   - `DRY_RUN=1` (parse-only, no DB writes)
+  - `STRICT_SCHEMA=1` (optional: only allow columns listed under `schemas` in `label-map.json`; default is **off** so parsing matches the legacy “all meter columns” behavior)
 
 ## Local Run
 

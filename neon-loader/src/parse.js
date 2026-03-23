@@ -8,7 +8,7 @@ export function parseGzipLog(fileBytes, options = {}) {
   const expectedHeaders = new Set(options.expectedHeaders || []);
   const headerAliases = options.headerAliases || {};
   const strictHeaders = expectedHeaders.size > 0;
-  const text = decodeFile(fileBytes);
+  const text = stripBom(decodeFile(fileBytes));
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length === 0) return { lineCount: 0, rawRecords: [], tallRows: [] };
 
@@ -348,6 +348,10 @@ function decodeFile(fileBytes) {
   } catch {
     return Buffer.from(fileBytes).toString("utf8");
   }
+}
+
+function stripBom(text) {
+  return String(text).replace(/^\uFEFF/, "");
 }
 
 function coerceValue(value) {

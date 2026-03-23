@@ -40,9 +40,12 @@ async function main() {
 
       const bytes = await getR2ObjectBytes(r2, { bucket, key: object.key });
       const schema = (labelMapConfig.schemas || {})[label.schemaId] || {};
+      // Strict header allowlists can drop every column if filenames/eras don't match exactly.
+      // Default: parse all meter columns (like the legacy Python loader). Opt in with STRICT_SCHEMA=1.
+      const strictSchema = process.env.STRICT_SCHEMA === "1";
       const parsed = parseGzipLog(bytes, {
-        expectedHeaders: schema.expectedHeaders || [],
-        headerAliases: schema.headerAliases || {},
+        expectedHeaders: strictSchema ? schema.expectedHeaders || [] : [],
+        headerAliases: strictSchema ? schema.headerAliases || {} : {},
       });
       if (!label.hasData && parsed.measurableHeaders && parsed.measurableHeaders.length > 0) {
         const preview = parsed.measurableHeaders.slice(0, 5).join(" | ");
