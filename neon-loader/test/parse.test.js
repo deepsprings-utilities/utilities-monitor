@@ -45,3 +45,23 @@ test("parseUtcTime handles single-digit hour (common in exports)", () => {
     "2026-02-23T09:05:07.000Z",
   );
 });
+
+test("parseUtcTime strips SQL-style quotes around timestamps", () => {
+  assert.equal(
+    parseUtcTime("'2026-02-23 20:45:00'"),
+    "2026-02-23T20:45:00.000Z",
+  );
+});
+
+test("parseGzipLog handles tab-separated AcquiSuite CSV with quoted time cell", () => {
+  const payload = [
+    "time(UTC)\terror\tlowalarm\thighalarm\tSolar Array Power (kWh)",
+    "'2026-02-23 20:45:00'\t0\t0\t0\t12.5",
+  ].join("\n");
+  const gzip = gzipSync(Buffer.from(payload, "utf8"));
+  const result = parseGzipLog(gzip);
+
+  assert.equal(result.rawRecords.length, 1);
+  assert.equal(result.rawRecords[0].recordTs, "2026-02-23T20:45:00.000Z");
+  assert.ok(result.tallRows.length >= 1);
+});

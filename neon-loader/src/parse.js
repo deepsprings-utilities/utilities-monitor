@@ -11,9 +11,12 @@ export function parseGzipLog(fileBytes, options = {}) {
   const strictHeaders = expectedHeaders.size > 0;
   const text = stripBom(decodeFile(fileBytes));
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (lines.length === 0) return { lineCount: 0, rawRecords: [], tallRows: [] };
+  if (lines.length === 0) {
+    return { lineCount: 0, rawRecords: [], tallRows: [], measurableHeaders: [] };
+  }
 
-  const headers = splitCsvLine(lines[0]).map(normalizeCsvHeader);
+  const { splitRow } = detectDelimiter(lines[0]);
+  const headers = splitRow(lines[0]).map(normalizeCsvHeader);
   const timeCol = findTimeColumnHeader(headers);
   if (!timeCol) {
     const loose = parseLooseLines(lines);
@@ -34,7 +37,7 @@ export function parseGzipLog(fileBytes, options = {}) {
 
   for (let i = 1; i < lines.length; i += 1) {
     const rawText = lines[i];
-    const cols = splitCsvLine(rawText);
+    const cols = splitRow(rawText);
     if (cols.length === 0) continue;
     const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] ?? ""]));
     const recordTs = parseUtcTime(row[timeCol]);
@@ -85,7 +88,11 @@ function parseLooseLines(lines) {
     const lineNo = idx + 1;
     const rawText = lines[idx];
     const parsed = parseLine(rawText);
-    const recordTs = parsed.ts || parsed.timestamp || null;
+    let recordTs = parsed.ts || parsed.timestamp || null;
+    if (!recordTs && parsed.col_1 !== undefined && parsed.col_1 !== null) {
+      const t = parseUtcTime(parsed.col_1);
+      if (t) recordTs = t;
+    }
     rawRecords.push({ lineNo, rawText, parsedJson: parsed, recordTs });
     for (const [key, value] of Object.entries(parsed)) {
       if (typeof value === "number" && Number.isFinite(value)) {
@@ -319,7 +326,7 @@ function parseBooleanFlag(value) {
  */
 export function parseUtcTime(value) {
   if (value === undefined || value === null) return null;
-  const s = String(value).trim();
+  const s = stripCellQuotes(value);
   if (!s) return null;
 
   // ISO / RFC3339 with explicit Z or offset (trust Date parser)
@@ -406,9 +413,39 @@ function findTimeColumnHeader(headers) {
   return null;
 }
 
+/**
+ * Prefer tab for AcquiSuite exports that are TSV; comma is typical .log.csv.
+ * Only try tab/semicolon when those characters appear (otherwise tab-split breaks comma-only lines).
+ */
+function detectDelimiter(firstLine) {
+  const strategies = [];
+  if (firstLine.includes("\t")) {
+    strategies.push({ splitRow: (line) => line.split("\t").map((c) => c.trim()) });
+  }
+  strategies.push({ splitRow: (line) => splitCsvLine(line) });
+  if (firstLine.includes(";") && !firstLine.includes(",")) {
+    strategies.push({ splitRow: (line) => line.split(";").map((c) => c.trim()) });
+  }
+  for (const { splitRow } of strategies) {
+    const headers = splitRow(firstLine).map(normalizeCsvHeader);
+    if (findTimeColumnHeader(headers)) {
+      return { splitRow };
+    }
+  }
+  return { splitRow: (line) => splitCsvLine(line) };
+}
+
+function stripCellQuotes(value) {
+  let t = String(value ?? "").trim();
+  if (t.length >= 2 && ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"')))) {
+    t = t.slice(1, -1);
+  }
+  return t.trim();
+}
+
 function coerceValue(value) {
   if (value === undefined || value === null) return "";
-  const s = String(value).trim();
+  const s = stripCellQuotes(value);
   if (s === "") return "";
   if (numberPattern.test(s)) return Number(s);
   // Do not use parseFloat() on arbitrary strings — e.g. parseFloat("2026-03-20T...") === 2026.

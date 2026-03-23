@@ -5,7 +5,9 @@ Durable scheduled ETL that:
 - Decompresses and parses AcquiSuite CSV log rows.
 - Resolves filename device numbers (`mb-001` ... `mb-009`) to label, device address, schema id, and physical group via `label-map.json`.
 - Normalizes legacy header typos/variants into stable metric keys.
-- Applies schema-aware header filtering per device schema id.
+- Applies schema-aware header filtering per device schema id (when `STRICT_SCHEMA=1`).
+- Detects **tab-** or **comma-**separated AcquiSuite logs (tab is common in exports).
+- Strips **SQL-style quotes** around cell values (e.g. `'2026-02-23 20:45:00'`).
 - Writes to Neon Postgres raw ingestion tables and a normalized tall table.
 - Tracks processed `(r2_key, etag)` checkpoints for idempotent reruns.
 
