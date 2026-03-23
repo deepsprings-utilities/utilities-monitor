@@ -6,22 +6,49 @@ const UNIT_RE = /\(([^()]*)\)\s*$/;
 const RESERVED = new Set(["time(UTC)", "error", "lowalarm", "highalarm"]);
 
 export function parseGzipLog(fileBytes, options = {}) {
-  const expectedHeaders = new Set(options.expectedHeaders || []);
-  const headerAliases = options.headerAliases || {};
-  const strictHeaders = expectedHeaders.size > 0;
   const text = stripBom(decodeFile(fileBytes));
   const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length === 0) {
     return { lineCount: 0, rawRecords: [], tallRows: [], measurableHeaders: [] };
   }
 
-  const { splitRow } = detectDelimiter(lines[0]);
-  const headers = splitRow(lines[0]).map(normalizeCsvHeader);
-  const timeCol = findTimeColumnHeader(headers);
-  if (!timeCol) {
-    const loose = parseLooseLines(lines);
-    return { ...loose, measurableHeaders: [] };
+  const headerMatch = findHeaderRow(lines);
+  if (headerMatch) {
+    const { headerOffset, splitRow, headers, timeCol } = headerMatch;
+    return parseStructuredTable(lines, {
+      firstLineIndex: headerOffset + 1,
+      splitRow,
+      headers,
+      timeCol,
+      options,
+    });
   }
+
+  // Headerless exports (e.g. Worker path): no title row — use fixed column order from label-map schema.
+  if (options.columnOrder?.length) {
+    const headers = options.columnOrder.map(normalizeCsvHeader);
+    const timeCol = findTimeColumnHeader(headers);
+    if (timeCol) {
+      // Data lines have no "time(UTC)" text — do not use detectDelimiter() which requires a header match.
+      const { splitRow } = detectDelimiterDataLine(lines[0]);
+      return parseStructuredTable(lines, {
+        firstLineIndex: 0,
+        splitRow,
+        headers,
+        timeCol,
+        options,
+      });
+    }
+  }
+
+  const loose = parseLooseLines(lines);
+  return { ...loose, measurableHeaders: [] };
+}
+
+function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCol, options }) {
+  const expectedHeaders = new Set(options.expectedHeaders || []);
+  const headerAliases = options.headerAliases || {};
+  const strictHeaders = expectedHeaders.size > 0;
 
   const measurableHeaders = [];
   const headerSpecs = headers.map((h) =>
@@ -32,18 +59,25 @@ export function parseGzipLog(fileBytes, options = {}) {
       measurableHeaders.push(h);
     }
   });
+
   const rawRecords = [];
   const tallRows = [];
+  const errIdx = headers.indexOf("error");
+  const lowIdx = headers.indexOf("lowalarm");
+  const highIdx = headers.indexOf("highalarm");
+  const timeIdx = headers.indexOf(timeCol);
 
-  for (let i = 1; i < lines.length; i += 1) {
+  for (let i = firstLineIndex; i < lines.length; i += 1) {
     const rawText = lines[i];
-    const cols = splitRow(rawText);
+    let cols = splitRow(rawText);
     if (cols.length === 0) continue;
-    const row = Object.fromEntries(headers.map((h, idx) => [h, cols[idx] ?? ""]));
-    const recordTs = parseUtcTime(row[timeCol]);
-    const errorFlag = parseBooleanFlag(row.error);
-    const lowAlarm = parseBooleanFlag(row.lowalarm);
-    const highAlarm = parseBooleanFlag(row.highalarm);
+    cols = padOrTruncateCols(cols, headers.length);
+
+    const row = buildRowObject(headers, cols);
+    const recordTs = timeIdx >= 0 ? parseUtcTime(cols[timeIdx]) : null;
+    const errorFlag = errIdx >= 0 ? parseBooleanFlag(cols[errIdx]) : false;
+    const lowAlarm = lowIdx >= 0 ? parseBooleanFlag(cols[lowIdx]) : false;
+    const highAlarm = highIdx >= 0 ? parseBooleanFlag(cols[highIdx]) : false;
 
     rawRecords.push({
       lineNo: i + 1,
@@ -74,11 +108,49 @@ export function parseGzipLog(fileBytes, options = {}) {
   }
 
   return {
-    lineCount: Math.max(lines.length - 1, 0),
+    lineCount: Math.max(lines.length - firstLineIndex, 0),
     rawRecords,
     tallRows,
     measurableHeaders,
   };
+}
+
+function padOrTruncateCols(cols, len) {
+  const out = cols.slice();
+  while (out.length < len) out.push("");
+  while (out.length > len) out.pop();
+  return out;
+}
+
+function buildRowObject(headers, cols) {
+  const row = {};
+  headers.forEach((h, idx) => {
+    const v = cols[idx] ?? "";
+    let key = h;
+    if (Object.prototype.hasOwnProperty.call(row, key)) {
+      key = `${h}__${idx}`;
+    }
+    row[key] = v;
+  });
+  return row;
+}
+
+/**
+ * Some exports have a junk/metadata line before the real header row.
+ * Scan the first few lines for one that splits into a recognizable time(UTC) column.
+ */
+function findHeaderRow(lines) {
+  const maxScan = Math.min(8, lines.length);
+  for (let offset = 0; offset < maxScan; offset += 1) {
+    const line = lines[offset];
+    const { splitRow } = detectDelimiter(line);
+    const headers = splitRow(line).map(normalizeCsvHeader);
+    const timeCol = findTimeColumnHeader(headers);
+    if (timeCol && headers.length >= 4) {
+      return { headerOffset: offset, splitRow, headers, timeCol };
+    }
+  }
+  return null;
 }
 
 function parseLooseLines(lines) {
@@ -96,6 +168,8 @@ function parseLooseLines(lines) {
     rawRecords.push({ lineNo, rawText, parsedJson: parsed, recordTs });
     for (const [key, value] of Object.entries(parsed)) {
       if (typeof value === "number" && Number.isFinite(value)) {
+        // Loose comma-split of TSV lines yields col_1..col_N — not real metric names; skip for tall table.
+        if (/^col_\d+$/i.test(key)) continue;
         tallRows.push({
           recordTs,
           metricKey: key,
@@ -433,6 +507,19 @@ function detectDelimiter(firstLine) {
     }
   }
   return { splitRow: (line) => splitCsvLine(line) };
+}
+
+/**
+ * Headerless rows are all data cells — pick tab vs comma vs semicolon without matching `time(UTC)` in a cell.
+ */
+function detectDelimiterDataLine(line) {
+  if (line.includes("\t")) {
+    return { splitRow: (l) => l.split("\t").map((c) => c.trim()) };
+  }
+  if (line.includes(";") && !line.includes(",")) {
+    return { splitRow: (l) => l.split(";").map((c) => c.trim()) };
+  }
+  return { splitRow: (l) => splitCsvLine(l) };
 }
 
 function stripCellQuotes(value) {

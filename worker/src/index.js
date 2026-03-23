@@ -1,7 +1,13 @@
 /**
  * AcquiSuite ingest worker
  * Ingests data from AcquiSuite into a Cloudflare R2 bucket. Configured by wrangler.jsonc.
+ *
+ * HTTP uploads often omit the CSV header row that FTP/file-server exports include.
+ * When PREPEND_CSV_HEADERS is enabled (default), we prepend a tab-separated header line
+ * (see mb-csv-header-lines.json) if the gzip payload does not already start with time(UTC).
  */
+
+import mbCsvHeaderLines from "./mb-csv-header-lines.json";
 
 export default {
   async fetch(request, env) {
@@ -65,9 +71,22 @@ export default {
     if (filePart) {
       const safeName = safeKey(filePart.filename || `acq_${Date.now()}.log.gz`);
       const objectKey = `log-gz/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
-      await env.BUCKET.put(objectKey, filePart.fileBytes, {
+      const shouldPrepend =
+        env.PREPEND_CSV_HEADERS !== "0" && env.PREPEND_CSV_HEADERS !== "false";
+      let bytesToStore = filePart.fileBytes;
+      let extraMeta = {};
+      if (shouldPrepend) {
+        const result = await maybePrependCsvHeader(
+          filePart.fileBytes,
+          filePart.filename,
+          mbCsvHeaderLines,
+        );
+        bytesToStore = result.bytes;
+        extraMeta = result.meta;
+      }
+      await env.BUCKET.put(objectKey, bytesToStore, {
         httpMetadata: { contentType: "application/gzip" },
-        customMetadata: meta,
+        customMetadata: { ...meta, ...extraMeta },
       });
     }
 
@@ -220,6 +239,69 @@ function extractMultipartTextField(bodyU8, boundary, fieldName) {
 
 function safeKey(s) {
   return String(s || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180);
+}
+
+/**
+ * @param {Uint8Array} fileBytes
+ * @param {string} filename
+ * @param {Record<string, string>} headerLinesByMb
+ * @returns {Promise<{ bytes: Uint8Array, meta: Record<string, string> }>}
+ */
+async function maybePrependCsvHeader(fileBytes, filename, headerLinesByMb) {
+  if (!fileBytes?.length || !isGzip(fileBytes)) {
+    return { bytes: fileBytes, meta: {} };
+  }
+  const mb = extractMbDeviceCode(filename);
+  const headerLine = mb ? headerLinesByMb[mb] : null;
+  if (!headerLine) {
+    return { bytes: fileBytes, meta: {} };
+  }
+  try {
+    const plain = await gunzip(fileBytes);
+    const text = dec(plain);
+    const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
+    const stripped = stripBom(firstLine);
+    if (stripped.startsWith("time(UTC)")) {
+      return { bytes: fileBytes, meta: {} };
+    }
+    const newText = `${headerLine}\n${text}`;
+    const out = await gzipText(newText);
+    return {
+      bytes: out,
+      meta: { csv_header_prepended: "true", csv_header_mb: mb },
+    };
+  } catch {
+    return { bytes: fileBytes, meta: { csv_header_error: "gzip_or_utf8" } };
+  }
+}
+
+function isGzip(u8) {
+  return u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b;
+}
+
+function extractMbDeviceCode(filename) {
+  const m = String(filename || "").match(/mb[-_]?(\d{3})/i);
+  return m ? m[1] : null;
+}
+
+function stripBom(s) {
+  return String(s).replace(/^\uFEFF/, "");
+}
+
+async function gunzip(uint8) {
+  const ds = new DecompressionStream("gzip");
+  const stream = new Blob([uint8]).stream().pipeThrough(ds);
+  const ab = await new Response(stream).arrayBuffer();
+  return new Uint8Array(ab);
+}
+
+async function gzipText(text) {
+  const encoder = new TextEncoder();
+  const uint8 = encoder.encode(text);
+  const cs = new CompressionStream("gzip");
+  const stream = new Blob([uint8]).stream().pipeThrough(cs);
+  const ab = await new Response(stream).arrayBuffer();
+  return new Uint8Array(ab);
 }
 
 function enc(s) { return new TextEncoder().encode(s); }

@@ -8,6 +8,9 @@ Durable scheduled ETL that:
 - Applies schema-aware header filtering per device schema id (when `STRICT_SCHEMA=1`).
 - Detects **tab-** or **comma-**separated AcquiSuite logs (tab is common in exports).
 - Strips **SQL-style quotes** around cell values (e.g. `'2026-02-23 20:45:00'`).
+- Scans the **first few lines** for the real header row (some files have a comment/junk line before `time(UTC)`).
+- Avoids useless tall metrics named `col_1`…`col_N` from failed loose parsing (those rows are skipped in loose mode).
+- **Headerless exports** (no `time(UTC)` title row — common for some upload paths): uses fixed column order from [`schema-column-orders.json`](schema-column-orders.json) by `schemaId` (from `label-map.json` / device). Override per schema with `schemas.<id>.columnOrder` in `label-map.json` if needed.
 - Writes to Neon Postgres raw ingestion tables and a normalized tall table.
 - Tracks processed `(r2_key, etag)` checkpoints for idempotent reruns.
 

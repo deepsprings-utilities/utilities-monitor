@@ -1,9 +1,21 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
 import { isProcessed, markProcessed } from "./checkpoint.js";
 import { parseGzipLog } from "./parse.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let schemaColumnOrders = {};
+try {
+  schemaColumnOrders = JSON.parse(
+    readFileSync(path.join(__dirname, "..", "schema-column-orders.json"), "utf8"),
+  );
+} catch {
+  schemaColumnOrders = {};
+}
 
 async function main() {
   const runId = `${Date.now()}`;
@@ -43,9 +55,11 @@ async function main() {
       // Strict header allowlists can drop every column if filenames/eras don't match exactly.
       // Default: parse all meter columns (like the legacy Python loader). Opt in with STRICT_SCHEMA=1.
       const strictSchema = process.env.STRICT_SCHEMA === "1";
+      const columnOrder = schema.columnOrder || schemaColumnOrders[label.schemaId] || null;
       const parsed = parseGzipLog(bytes, {
         expectedHeaders: strictSchema ? schema.expectedHeaders || [] : [],
         headerAliases: strictSchema ? schema.headerAliases || {} : {},
+        columnOrder,
       });
       if (!label.hasData && parsed.measurableHeaders && parsed.measurableHeaders.length > 0) {
         const preview = parsed.measurableHeaders.slice(0, 5).join(" | ");

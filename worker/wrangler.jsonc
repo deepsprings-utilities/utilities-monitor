@@ -15,7 +15,13 @@
 	],
 	"r2_buckets": [
 		{ "binding": "BUCKET", "bucket_name": "ds-acquisuite-raw" }
-	]
+	],
+	/**
+	 * Set to "0" or "false" in the dashboard to store HTTP uploads as-is (no CSV header line).
+	 */
+	"vars": {
+		"PREPEND_CSV_HEADERS": "1"
+	},
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

@@ -53,6 +53,36 @@ test("parseUtcTime strips SQL-style quotes around timestamps", () => {
   );
 });
 
+test("parseGzipLog skips junk line before real header row", () => {
+  const payload = [
+    "# junk or comment line",
+    "time(UTC)\terror\tlowalarm\thighalarm\tSolar Array Power (kWh)",
+    "'2026-02-23 20:45:00'\t0\t0\t0\t12.5",
+  ].join("\n");
+  const gzip = gzipSync(Buffer.from(payload, "utf8"));
+  const result = parseGzipLog(gzip);
+
+  assert.equal(result.rawRecords.length, 1);
+  assert.ok(result.tallRows.some((r) => r.metricKey !== "col_1" && !/^col_\d+$/i.test(r.metricKey)));
+});
+
+test("parseGzipLog uses columnOrder when there is no header row (headerless export)", () => {
+  const columnOrder = [
+    "time(UTC)",
+    "error",
+    "lowalarm",
+    "highalarm",
+    "Solar Array Power (kWh)",
+  ];
+  const payload = "'2026-02-23 20:45:00'\t0\t0\t0\t99.5";
+  const gzip = gzipSync(Buffer.from(payload, "utf8"));
+  const result = parseGzipLog(gzip, { columnOrder });
+
+  assert.equal(result.rawRecords.length, 1);
+  assert.equal(result.rawRecords[0].recordTs, "2026-02-23T20:45:00.000Z");
+  assert.ok(result.tallRows.some((r) => r.sourceSystem === "solar_field"));
+});
+
 test("parseGzipLog handles tab-separated AcquiSuite CSV with quoted time cell", () => {
   const payload = [
     "time(UTC)\terror\tlowalarm\thighalarm\tSolar Array Power (kWh)",
