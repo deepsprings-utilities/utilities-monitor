@@ -15,6 +15,8 @@ jobs:
         env:
             CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
             CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Wrangler validates account id strictly; neon-loader only builds a URL, so trailing
+        # newlines / spaces in the GitHub secret can break deploy while R2 ingest still works.
         steps:
             - name: Checkout
               uses: actions/checkout@v4
@@ -32,18 +34,28 @@ jobs:
             # Fail with a clear message if secrets are missing (empty string = wrong name, org access, or fork PR).
             - name: Check Cloudflare secrets
               run: |
-                  if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+                  set -e
+                  TOKEN="$(printf '%s' "${CLOUDFLARE_API_TOKEN}" | tr -d '\n\r')"
+                  ACCT="$(printf '%s' "${CLOUDFLARE_ACCOUNT_ID}" | tr -d ' \n\r\t')"
+                  if [ -z "${TOKEN}" ]; then
                     echo "::error::CLOUDFLARE_API_TOKEN is empty. Add a repository Actions secret named exactly CLOUDFLARE_API_TOKEN (Settings → Secrets and variables → Actions). Not an Environment secret unless this job sets environment:."
                     exit 1
                   fi
-                  if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
-                    echo "::error::CLOUDFLARE_ACCOUNT_ID is empty. Add repository secret CLOUDFLARE_ACCOUNT_ID (32-char hex id from Cloudflare dashboard)."
+                  if [ -z "${ACCT}" ]; then
+                    echo "::error::CLOUDFLARE_ACCOUNT_ID is empty. Add repository secret CLOUDFLARE_ACCOUNT_ID (32-char hex id from Cloudflare dashboard → Workers overview, right sidebar \"Account ID\" — not Zone ID)."
                     exit 1
                   fi
-                  echo "Cloudflare env vars are set (values not shown)."
+                  if ! printf '%s' "${ACCT}" | grep -qE '^[a-fA-F0-9]{32}$'; then
+                    echo "::error::CLOUDFLARE_ACCOUNT_ID must be exactly 32 hexadecimal characters (no quotes). Re-copy from Cloudflare dashboard; remove any spaces or line breaks if you pasted from a spreadsheet."
+                    exit 1
+                  fi
+                  echo "Cloudflare account id format OK (trimmed). API token present."
 
             - name: Deploy
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-              run: npx wrangler deploy
+              run: |
+                  export CLOUDFLARE_ACCOUNT_ID="$(printf '%s' "${CLOUDFLARE_ACCOUNT_ID}" | tr -d ' \n\r\t')"
+                  export CLOUDFLARE_API_TOKEN="$(printf '%s' "${CLOUDFLARE_API_TOKEN}" | tr -d '\n\r')"
+                  npx wrangler deploy
