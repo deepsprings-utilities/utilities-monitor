@@ -29,6 +29,19 @@ jobs:
             - name: Install dependencies
               run: npm ci
 
+            # Fail with a clear message if secrets are missing (empty string = wrong name, org access, or fork PR).
+            - name: Check Cloudflare secrets
+              run: |
+                  if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+                    echo "::error::CLOUDFLARE_API_TOKEN is empty. Add a repository Actions secret named exactly CLOUDFLARE_API_TOKEN (Settings → Secrets and variables → Actions). Not an Environment secret unless this job sets environment:."
+                    exit 1
+                  fi
+                  if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+                    echo "::error::CLOUDFLARE_ACCOUNT_ID is empty. Add repository secret CLOUDFLARE_ACCOUNT_ID (32-char hex id from Cloudflare dashboard)."
+                    exit 1
+                  fi
+                  echo "Cloudflare env vars are set (values not shown)."
+
             - name: Deploy
               env:
                   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
