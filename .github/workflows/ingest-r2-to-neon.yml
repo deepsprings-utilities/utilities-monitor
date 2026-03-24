@@ -14,7 +14,9 @@ jobs:
       run:
         working-directory: neon-loader
     env:
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Avoid `${{ secrets || vars }}` — merge in shell (see Merge step below).
+      _CF_ACCOUNT_ID_FROM_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      _CF_ACCOUNT_ID_FROM_VAR: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
       R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
@@ -24,6 +26,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Merge CLOUDFLARE_ACCOUNT_ID (secret or variable)
+        working-directory: ${{ github.workspace }}
+        run: |
+          s="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_SECRET}" | tr -d ' \n\r\t')"
+          v="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_VAR}" | tr -d ' \n\r\t')"
+          if [ -n "$s" ]; then echo "CLOUDFLARE_ACCOUNT_ID=$s" >> "$GITHUB_ENV"
+          elif [ -n "$v" ]; then echo "CLOUDFLARE_ACCOUNT_ID=$v" >> "$GITHUB_ENV"
+          fi
+          echo "len_secret=${#s} len_var=${#v} (diagnostic; 0 means GitHub did not inject)"
 
       - name: Setup Node
         uses: actions/setup-node@v4

@@ -5,6 +5,9 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "acquisuite-ingest",
+	// Optional fallback if GitHub Actions stops passing CLOUDFLARE_ACCOUNT_ID (e.g. environment-scoped secrets).
+	// Uncomment and paste your 32-char hex Account ID from Cloudflare (Workers overview → sidebar).
+	// "account_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
 	"main": "src/index.js",
 	"compatibility_date": "2026-02-23",
 	"observability": {

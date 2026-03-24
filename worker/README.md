@@ -61,10 +61,16 @@ wrangler deploy
 
 This repo includes a workflow at `.github/workflows/deploy-worker.yml`.
 
-In your GitHub repo settings, add **Actions secrets**:
+Under **Settings → Secrets and variables → Actions**:
 
-- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with **Workers:Edit** (and any R2 permissions you use)
-- `CLOUDFLARE_ACCOUNT_ID`: your Cloudflare account id
+**Common mistakes**
+
+- **Secrets vs Variables:** The **API token** must be a **Secret** named `CLOUDFLARE_API_TOKEN`. The **Account ID** can be a **Secret or Variable** named `CLOUDFLARE_ACCOUNT_ID` (the workflow merges both in bash).
+- **Environment-scoped secrets:** If the Account ID secret is attached to a GitHub **Environment** (e.g. `production`), it is **empty** unless the job declares `environment: production`. Either move the secret to repository-level, or add that key to `.github/workflows/deploy-worker.yml` under `jobs.deploy`.
+- **Fallback:** Uncomment `"account_id"` in `wrangler.jsonc` and paste your 32-char hex Account ID (safe to commit; Wrangler uses it when `CLOUDFLARE_ACCOUNT_ID` is unset).
+
+- `CLOUDFLARE_API_TOKEN` (**Secret**): Cloudflare API token with **Workers:Edit** (and any R2 permissions you use)
+- `CLOUDFLARE_ACCOUNT_ID` (**Secret or Variable**): 32-character hex **Account ID** from the Cloudflare dashboard (Workers overview sidebar — not Zone ID)
 
 ## Required Worker config
 
