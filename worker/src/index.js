@@ -3,8 +3,9 @@
  * Ingests data from AcquiSuite into a Cloudflare R2 bucket. Configured by wrangler.jsonc.
  *
  * HTTP uploads often omit the CSV header row that FTP/file-server exports include.
- * When PREPEND_CSV_HEADERS is enabled (default), we prepend a tab-separated header line
- * (see mb-csv-header-lines.json) if the gzip payload does not already start with time(UTC).
+ * When PREPEND_CSV_HEADERS is enabled (default), we prepend the canonical tab-separated
+ * header line from mb-csv-header-lines.json for the MB device code in the filename,
+ * unless the first non-empty line already matches that header (normalized comparison).
  */
 
 import mbCsvHeaderLines from "./mb-csv-header-lines.json";
@@ -252,19 +253,22 @@ async function maybePrependCsvHeader(fileBytes, filename, headerLinesByMb) {
     return { bytes: fileBytes, meta: {} };
   }
   const mb = extractMbDeviceCode(filename);
-  const headerLine = mb ? headerLinesByMb[mb] : null;
-  if (!headerLine) {
+  const canonicalHeader = mb ? headerLinesByMb[mb] : null;
+  if (!canonicalHeader) {
     return { bytes: fileBytes, meta: {} };
   }
   try {
     const plain = await gunzip(fileBytes);
     const text = dec(plain);
-    const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
-    const stripped = stripBom(firstLine);
-    if (stripped.startsWith("time(UTC)")) {
-      return { bytes: fileBytes, meta: {} };
+
+    if (findCanonicalHeaderLineInText(text, canonicalHeader) !== null) {
+      return {
+        bytes: fileBytes,
+        meta: { csv_header_matched: "true", csv_header_mb: mb },
+      };
     }
-    const newText = `${headerLine}\n${text}`;
+
+    const newText = `${canonicalHeader}\n${text}`;
     const out = await gzipText(newText);
     return {
       bytes: out,
@@ -273,6 +277,32 @@ async function maybePrependCsvHeader(fileBytes, filename, headerLinesByMb) {
   } catch {
     return { bytes: fileBytes, meta: { csv_header_error: "gzip_or_utf8" } };
   }
+}
+
+/**
+ * Scan the first few lines for a row that matches the canonical header from
+ * mb-csv-header-lines.json (normalized tab-separated equality). Returns the
+ * matched line index or null if not found (handles a junk line before the header).
+ */
+function findCanonicalHeaderLineInText(text, canonicalLine) {
+  const want = normalizeCsvHeaderLine(canonicalLine);
+  if (!want) return null;
+  const lines = String(text).split(/\r?\n/);
+  const maxScan = Math.min(lines.length, 12);
+  for (let i = 0; i < maxScan; i++) {
+    const norm = normalizeCsvHeaderLine(lines[i]);
+    if (norm && norm === want) return i;
+  }
+  return null;
+}
+
+function normalizeCsvHeaderLine(s) {
+  const raw = stripBom(String(s || "").trim());
+  if (!raw) return "";
+  return raw
+    .split("\t")
+    .map((cell) => String(cell).trim())
+    .join("\t");
 }
 
 function isGzip(u8) {
