@@ -1,364 +1,255 @@
 /**
- * AcquiSuite ingest worker
- * Ingests data from AcquiSuite into a Cloudflare R2 bucket. Configured by wrangler.jsonc.
- *
- * HTTP uploads often omit the CSV header row that FTP/file-server exports include.
- * When PREPEND_CSV_HEADERS is enabled (default), we prepend the canonical tab-separated
- * header line from mb-csv-header-lines.json for the MB device code in the filename,
- * unless the first non-empty line already matches that header (normalized comparison).
+ * AcquiSuite → R2. Optional CSV header prepend from mb-csv-header-lines.json (see wrangler vars).
  */
-
 import mbCsvHeaderLines from "./mb-csv-header-lines.json";
+
+const te = new TextEncoder();
+const td = new TextDecoder();
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method !== "POST" && request.method !== "PUT") return ack();
 
-    // --- Always be friendly for non-upload methods (AcquiSuite test / ping) ---
-    if (request.method !== "POST" && request.method !== "PUT") {
-      return successAck();
-    }
-
-    // --- Auth: accept key from query OR x-api-key header OR Basic auth password (optional) ---
-    const provided =
+    const key =
       url.searchParams.get("key") ||
       url.searchParams.get("password") ||
       request.headers.get("x-api-key") ||
-      extractBasicAuthPassword(request.headers.get("authorization"));
+      basicPass(request.headers.get("authorization"));
 
-    if (!env.API_KEY) return text("MISSING_API_KEY", 500);
-    if (!provided || provided !== env.API_KEY) return text("FORBIDDEN", 403);
-
-    if (!env.BUCKET) return text("MISSING_R2_BINDING", 500);
+    if (!env.API_KEY) return txt("MISSING_API_KEY", 500);
+    if (!key || key !== env.API_KEY) return txt("FORBIDDEN", 403);
+    if (!env.BUCKET) return txt("MISSING_R2_BINDING", 500);
 
     const ct = request.headers.get("content-type") || "";
+    if (!ct.toLowerCase().includes("multipart/form-data")) return ack();
 
-    // --- If it's NOT multipart, treat it like a connection test and ACK success ---
-    if (!ct.toLowerCase().includes("multipart/form-data")) {
-      return successAck();
-    }
+    const bm = ct.match(/boundary=([^\s;]+)/i);
+    if (!bm) return ack();
 
-    const m = ct.match(/boundary=([^\s;]+)/i);
-    if (!m) {
-      return successAck();
-    }
-    const boundary = m[1];
+    const body = new Uint8Array(await request.arrayBuffer());
+    const b = bm[1];
+    const log = part(body, b, "LOGFILE");
+    const files = allFileParts(body, b);
+    if (!log && !files.length) return ack();
 
-    // Read entire request (AcquiSuite uploads are usually small)
-    const bodyBuf = await request.arrayBuffer();
-    const body = new Uint8Array(bodyBuf);
+    const serial = textPart(body, b, "SERIALNUMBER") || "unknown_serial";
+    const filetime = textPart(body, b, "FILETIME") || "";
+    const loopname = textPart(body, b, "LOOPNAME") || "";
+    const d = new Date();
+    const y = d.getUTCFullYear();
+    const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    const ser = safe(serial);
+    const baseMeta = { serial, filetime, loopname, source: "acquisuite" };
 
-    // Primary LOGFILE (required for upload path)
-    const filePart = extractMultipartFilePart(body, boundary, "LOGFILE");
-    const allParts = extractAllMultipartFileParts(body, boundary);
-
-    if (!filePart && !allParts.length) {
-      return successAck();
-    }
-
-    const serial = extractMultipartTextField(body, boundary, "SERIALNUMBER") || "unknown_serial";
-    const filetime = extractMultipartTextField(body, boundary, "FILETIME") || "";
-    const loopname = extractMultipartTextField(body, boundary, "LOOPNAME") || "";
-
-    const now = new Date();
-    const yyyy = now.getUTCFullYear();
-    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(now.getUTCDate()).padStart(2, "0");
-
-    const safeSerial = safeKey(serial);
-    const meta = { serial, filetime, loopname, source: "acquisuite" };
-
-    // Store primary LOGFILE
-    if (filePart) {
-      const safeName = safeKey(filePart.filename || `acq_${Date.now()}.log.gz`);
-      const objectKey = `log-gz/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
-      const shouldPrepend =
-        env.PREPEND_CSV_HEADERS !== "0" && env.PREPEND_CSV_HEADERS !== "false";
-      let bytesToStore = filePart.fileBytes;
-      let extraMeta = {};
-      if (shouldPrepend) {
-        const result = await maybePrependCsvHeader(
-          filePart.fileBytes,
-          filePart.filename,
-          mbCsvHeaderLines,
-        );
-        bytesToStore = result.bytes;
-        extraMeta = result.meta;
+    if (log) {
+      const name = safe(log.fn || `acq_${Date.now()}.log.gz`);
+      let bytes = log.data;
+      let extra = {};
+      if (env.PREPEND_CSV_HEADERS !== "0" && env.PREPEND_CSV_HEADERS !== "false") {
+        const r = await prependHeader(bytes, log.fn, mbCsvHeaderLines, env);
+        bytes = r.bytes;
+        extra = r.meta;
       }
-      await env.BUCKET.put(objectKey, bytesToStore, {
+      await env.BUCKET.put(`log-gz/${ser}/${y}/${mo}/${day}/${name}`, bytes, {
         httpMetadata: { contentType: "application/gzip" },
-        customMetadata: { ...meta, ...extraMeta },
+        customMetadata: { ...baseMeta, ...extra },
       });
     }
 
-    // Store status and other file parts (e.g. status.txt)
-    for (const part of allParts) {
-      if (filePart && (part.fieldName || "").toLowerCase() === "logfile" && part.filename === (filePart.filename || "")) {
-        continue;
-      }
-      const prefix = isStatusPart(part) ? "status" : "other";
-      const safeName = safeKey(part.filename || `${part.fieldName || "part"}.bin`);
-      const objectKey = `${prefix}/${safeSerial}/${yyyy}/${mm}/${dd}/${safeName}`;
-      const contentType = part.filename && /\.txt$/i.test(part.filename) ? "text/plain" : "application/octet-stream";
-      await env.BUCKET.put(objectKey, part.fileBytes, {
-        httpMetadata: { contentType },
-        customMetadata: { ...meta, fieldName: part.fieldName || "", originalFilename: part.filename || "" },
+    for (const p of files) {
+      if (log && p.field.toLowerCase() === "logfile" && p.fn === (log.fn || "")) continue;
+      const pre = statusish(p) ? "status" : "other";
+      const nm = safe(p.fn || `${p.field || "part"}.bin`);
+      await env.BUCKET.put(`${pre}/${ser}/${y}/${mo}/${day}/${nm}`, p.data, {
+        httpMetadata: { contentType: /\.txt$/i.test(p.fn || "") ? "text/plain" : "application/octet-stream" },
+        customMetadata: { ...baseMeta, fieldName: p.field || "", originalFilename: p.fn || "" },
       });
     }
-
-    return successAck();
+    return ack();
   },
 };
 
-function successAck() {
-  return new Response("SUCCESS - OK\r\n", {
-    status: 200,
-    headers: { "content-type": "text/html" },
-  });
+function ack() {
+  return new Response("SUCCESS - OK\r\n", { status: 200, headers: { "content-type": "text/html" } });
+}
+function txt(m, s = 200) {
+  return new Response(m, { status: s, headers: { "content-type": "text/plain" } });
 }
 
-function text(msg, status = 200) {
-  return new Response(msg, { status, headers: { "content-type": "text/plain" } });
-}
-
-function extractBasicAuthPassword(authHeader) {
-  if (!authHeader) return "";
-  const m = authHeader.match(/^Basic\s+(.+)$/i);
+function basicPass(h) {
+  if (!h) return "";
+  const m = h.match(/^Basic\s+(.+)$/i);
   if (!m) return "";
   try {
-    const decoded = atob(m[1]);
-    const idx = decoded.indexOf(":");
-    if (idx === -1) return "";
-    return decoded.slice(idx + 1);
+    const d = atob(m[1]);
+    const i = d.indexOf(":");
+    return i === -1 ? "" : d.slice(i + 1);
   } catch {
     return "";
   }
 }
 
-function extractMultipartFilePart(bodyU8, boundary, fieldName) {
-  const headerNeedle = enc(`name="${fieldName}"`);
-  const namePos = indexOfSubarray(bodyU8, headerNeedle, 0);
-  if (namePos === -1) return null;
-
-  const delimBytes = enc(`--${boundary}`);
-  const partStart = lastIndexOfSubarray(bodyU8, delimBytes, namePos);
-  if (partStart === -1) return null;
-
-  const afterBoundary = partStart + delimBytes.length;
-  const headersStart = skipCRLF(bodyU8, afterBoundary);
-
-  const headerEndMarker = enc("\r\n\r\n");
-  const headersEnd = indexOfSubarray(bodyU8, headerEndMarker, headersStart);
-  if (headersEnd === -1) return null;
-
-  const headersText = dec(bodyU8.slice(headersStart, headersEnd));
-  let filename = "";
-  const fnMatch = headersText.match(/filename="([^"]+)"/i);
-  if (fnMatch && fnMatch[1]) filename = fnMatch[1].split("/").pop();
-
-  const contentStart = headersEnd + headerEndMarker.length;
-
-  const nextBoundaryNeedle = enc(`\r\n--${boundary}`);
-  const contentEnd = indexOfSubarray(bodyU8, nextBoundaryNeedle, contentStart);
-  if (contentEnd === -1) return null;
-
-  const fileBytes = bodyU8.slice(contentStart, contentEnd);
-  return { filename, fileBytes };
+/** One multipart part by field name → { fn, data } or null */
+function part(body, boundary, field) {
+  const r = partBounds(body, boundary, field);
+  if (!r) return null;
+  const hdr = td.decode(body.subarray(r.h0, r.h1));
+  const fn = hdr.match(/filename="([^"]+)"/i)?.[1]?.split("/").pop() || "";
+  return { fn, data: body.subarray(r.c0, r.c1) };
 }
 
-/**
- * Extract all file parts (with a filename) from multipart body.
- * Returns array of { fieldName, filename, fileBytes }.
- */
-function extractAllMultipartFileParts(bodyU8, boundary) {
-  const parts = [];
-  const delimBytes = enc(`--${boundary}`);
-  const headerEndMarker = enc("\r\n\r\n");
-  let searchFrom = 0;
+function textPart(body, boundary, field) {
+  const r = partBounds(body, boundary, field);
+  return r ? td.decode(body.subarray(r.c0, r.c1)).trim() : "";
+}
 
-  while (true) {
-    const partStart = indexOfSubarray(bodyU8, delimBytes, searchFrom);
-    if (partStart === -1) break;
+function partBounds(body, boundary, field) {
+  const name = te.encode(`name="${field}"`);
+  const np = find(body, name, 0);
+  if (np === -1) return null;
+  const bd = te.encode(`--${boundary}`);
+  const ps = findLast(body, bd, np);
+  if (ps === -1) return null;
+  let h0 = skipNl(body, ps + bd.length);
+  const sep = te.encode("\r\n\r\n");
+  const h1 = find(body, sep, h0);
+  if (h1 === -1) return null;
+  const c0 = h1 + sep.length;
+  const end = te.encode(`\r\n--${boundary}`);
+  const c1 = find(body, end, c0);
+  if (c1 === -1) return null;
+  return { h0, h1, c0, c1 };
+}
 
-    let afterBoundary = partStart + delimBytes.length;
-    if (bodyU8[afterBoundary] === 45 && bodyU8[afterBoundary + 1] === 45) break;
-
-    const headersStart = skipCRLF(bodyU8, afterBoundary);
-    const headersEnd = indexOfSubarray(bodyU8, headerEndMarker, headersStart);
-    if (headersEnd === -1) break;
-
-    const headersText = dec(bodyU8.slice(headersStart, headersEnd));
-    const nameMatch = headersText.match(/name="([^"]+)"/i);
-    const fieldName = nameMatch && nameMatch[1] ? nameMatch[1] : "";
-    let filename = "";
-    const fnMatch = headersText.match(/filename="([^"]+)"/i);
-    if (fnMatch && fnMatch[1]) filename = fnMatch[1].split("/").pop();
-
-    const contentStart = headersEnd + headerEndMarker.length;
-    const nextBoundaryNeedle = enc(`\r\n--${boundary}`);
-    let contentEnd = indexOfSubarray(bodyU8, nextBoundaryNeedle, contentStart);
-    if (contentEnd === -1) contentEnd = bodyU8.length;
-
-    const fileBytes = bodyU8.slice(contentStart, contentEnd);
-    if (filename) parts.push({ fieldName, filename, fileBytes });
-
-    searchFrom = contentEnd;
+function allFileParts(body, boundary) {
+  const out = [];
+  const bd = te.encode(`--${boundary}`);
+  const sep = te.encode("\r\n\r\n");
+  const endM = te.encode(`\r\n--${boundary}`);
+  let from = 0;
+  for (;;) {
+    const ps = find(body, bd, from);
+    if (ps === -1) break;
+    const a = ps + bd.length;
+    if (body[a] === 45 && body[a + 1] === 45) break;
+    let h0 = skipNl(body, a);
+    const h1 = find(body, sep, h0);
+    if (h1 === -1) break;
+    const hdr = td.decode(body.subarray(h0, h1));
+    const field = hdr.match(/name="([^"]+)"/i)?.[1] || "";
+    const fn = hdr.match(/filename="([^"]+)"/i)?.[1]?.split("/").pop() || "";
+    const c0 = h1 + sep.length;
+    let c1 = find(body, endM, c0);
+    if (c1 === -1) c1 = body.length;
+    if (fn) out.push({ field, fn, data: body.subarray(c0, c1) });
+    from = c1;
   }
-  return parts;
+  return out;
 }
 
-function isStatusPart(part) {
-  const name = (part.fieldName || "").toLowerCase();
-  const fn = (part.filename || "").toLowerCase();
-  return name.includes("status") || fn.includes("status") || fn.endsWith(".txt");
+function statusish(p) {
+  const n = (p.field || "").toLowerCase();
+  const f = (p.fn || "").toLowerCase();
+  return n.includes("status") || f.includes("status") || f.endsWith(".txt");
 }
 
-function extractMultipartTextField(bodyU8, boundary, fieldName) {
-  const headerNeedle = enc(`name="${fieldName}"`);
-  const namePos = indexOfSubarray(bodyU8, headerNeedle, 0);
-  if (namePos === -1) return "";
-
-  const delimBytes = enc(`--${boundary}`);
-  const partStart = lastIndexOfSubarray(bodyU8, delimBytes, namePos);
-  if (partStart === -1) return "";
-
-  const afterBoundary = partStart + delimBytes.length;
-  const headersStart = skipCRLF(bodyU8, afterBoundary);
-
-  const headerEndMarker = enc("\r\n\r\n");
-  const headersEnd = indexOfSubarray(bodyU8, headerEndMarker, headersStart);
-  if (headersEnd === -1) return "";
-
-  const contentStart = headersEnd + headerEndMarker.length;
-
-  const nextBoundaryNeedle = enc(`\r\n--${boundary}`);
-  const contentEnd = indexOfSubarray(bodyU8, nextBoundaryNeedle, contentStart);
-  if (contentEnd === -1) return "";
-
-  return dec(bodyU8.slice(contentStart, contentEnd)).replace(/^\s+|\s+$/g, "");
+function safe(s) {
+  return String(s || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, 180);
 }
 
-function safeKey(s) {
-  return String(s || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 180);
-}
-
-/**
- * @param {Uint8Array} fileBytes
- * @param {string} filename
- * @param {Record<string, string>} headerLinesByMb
- * @returns {Promise<{ bytes: Uint8Array, meta: Record<string, string> }>}
- */
-async function maybePrependCsvHeader(fileBytes, filename, headerLinesByMb) {
-  if (!fileBytes?.length || !isGzip(fileBytes)) {
-    return { bytes: fileBytes, meta: {} };
-  }
-  const mb = extractMbDeviceCode(filename);
-  const canonicalHeader = mb ? headerLinesByMb[mb] : null;
-  if (!canonicalHeader) {
-    return { bytes: fileBytes, meta: {} };
-  }
+async function prependHeader(bytes, filename, byMb, env) {
+  if (!bytes?.length || bytes[0] !== 0x1f || bytes[1] !== 0x8b) return { bytes, meta: {} };
+  const mb =
+    mbFromFn(filename) || defaultMb(env);
+  const line = mb && byMb[mb];
+  if (!line) return { bytes, meta: {} };
   try {
-    const plain = await gunzip(fileBytes);
-    const text = dec(plain);
-
-    if (findCanonicalHeaderLineInText(text, canonicalHeader) !== null) {
-      return {
-        bytes: fileBytes,
-        meta: { csv_header_matched: "true", csv_header_mb: mb },
-      };
+    const text = td.decode(await gunzip(bytes));
+    if (headerIdx(text, line) != null) {
+      return { bytes, meta: { csv_header_matched: "true", csv_header_mb: mb } };
     }
-
-    const newText = `${canonicalHeader}\n${text}`;
-    const out = await gzipText(newText);
-    return {
-      bytes: out,
-      meta: { csv_header_prepended: "true", csv_header_mb: mb },
-    };
+    const gz = await gzip(`${line}\n${text}`);
+    return { bytes: gz, meta: { csv_header_prepended: "true", csv_header_mb: mb } };
   } catch {
-    return { bytes: fileBytes, meta: { csv_header_error: "gzip_or_utf8" } };
+    return { bytes, meta: {} };
   }
 }
 
-/**
- * Scan the first few lines for a row that matches the canonical header from
- * mb-csv-header-lines.json (normalized tab-separated equality). Returns the
- * matched line index or null if not found (handles a junk line before the header).
- */
-function findCanonicalHeaderLineInText(text, canonicalLine) {
-  const want = normalizeCsvHeaderLine(canonicalLine);
+function mbFromFn(fn) {
+  const m = String(fn || "").match(/mb[-_]?(\d{1,3})(?:\D|$)/i);
+  return m ? m[1].padStart(3, "0") : null;
+}
+
+function defaultMb(env) {
+  const v = env?.DEFAULT_CSV_HEADER_MB;
+  if (v == null || String(v).trim() === "") return null;
+  const t = String(v).trim();
+  return /^\d{1,3}$/.test(t) ? t.padStart(3, "0") : null;
+}
+
+function normHeader(s) {
+  const r = String(s || "")
+    .replace(/^\uFEFF/, "")
+    .trim();
+  if (!r) return "";
+  return r
+    .split("\t")
+    .map((c) => c.trim())
+    .join("\t");
+}
+
+function headerIdx(text, canonical) {
+  const want = normHeader(canonical);
   if (!want) return null;
   const lines = String(text).split(/\r?\n/);
-  const maxScan = Math.min(lines.length, 12);
-  for (let i = 0; i < maxScan; i++) {
-    const norm = normalizeCsvHeaderLine(lines[i]);
-    if (norm && norm === want) return i;
+  for (let i = 0; i < Math.min(lines.length, 12); i++) {
+    const n = normHeader(lines[i]);
+    if (n === want) return i;
   }
   return null;
 }
 
-function normalizeCsvHeaderLine(s) {
-  const raw = stripBom(String(s || "").trim());
-  if (!raw) return "";
-  return raw
-    .split("\t")
-    .map((cell) => String(cell).trim())
-    .join("\t");
-}
-
-function isGzip(u8) {
-  return u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b;
-}
-
-function extractMbDeviceCode(filename) {
-  const m = String(filename || "").match(/mb[-_]?(\d{3})/i);
-  return m ? m[1] : null;
-}
-
-function stripBom(s) {
-  return String(s).replace(/^\uFEFF/, "");
-}
-
-async function gunzip(uint8) {
+async function gunzip(u8) {
   const ds = new DecompressionStream("gzip");
-  const stream = new Blob([uint8]).stream().pipeThrough(ds);
-  const ab = await new Response(stream).arrayBuffer();
+  const ab = await new Response(new Blob([u8]).stream().pipeThrough(ds)).arrayBuffer();
   return new Uint8Array(ab);
 }
 
-async function gzipText(text) {
-  const encoder = new TextEncoder();
-  const uint8 = encoder.encode(text);
+async function gzip(str) {
+  const u8 = te.encode(str);
   const cs = new CompressionStream("gzip");
-  const stream = new Blob([uint8]).stream().pipeThrough(cs);
-  const ab = await new Response(stream).arrayBuffer();
+  const ab = await new Response(new Blob([u8]).stream().pipeThrough(cs)).arrayBuffer();
   return new Uint8Array(ab);
 }
 
-function enc(s) { return new TextEncoder().encode(s); }
-function dec(u8) { return new TextDecoder("utf-8", { fatal: false }).decode(u8); }
-
-function skipCRLF(u8, i) {
-  if (u8[i] === 13 && u8[i + 1] === 10) return i + 2;
-  return i;
+function skipNl(u8, i) {
+  return u8[i] === 13 && u8[i + 1] === 10 ? i + 2 : i;
 }
 
-function indexOfSubarray(haystack, needle, fromIndex = 0) {
-  outer: for (let i = fromIndex; i <= haystack.length - needle.length; i++) {
-    for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) continue outer;
-    }
-    return i;
+function find(h, n, start = 0) {
+  for (let i = start; i <= h.length - n.length; i++) {
+    let j = 0;
+    for (; j < n.length; j++) if (h[i + j] !== n[j]) break;
+    if (j === n.length) return i;
   }
   return -1;
 }
 
-function lastIndexOfSubarray(haystack, needle, beforeIndex) {
-  const maxStart = Math.min(beforeIndex, haystack.length - needle.length);
-  outer: for (let i = maxStart; i >= 0; i--) {
-    for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) continue outer;
-    }
-    return i;
+function findLast(h, n, before) {
+  const max = Math.min(before, h.length - n.length);
+  for (let i = max; i >= 0; i--) {
+    let j = 0;
+    for (; j < n.length; j++) if (h[i + j] !== n[j]) break;
+    if (j === n.length) return i;
   }
   return -1;
 }
+
+export const findCanonicalHeaderLineInText = headerIdx;
+export const normalizeCsvHeaderLine = normHeader;
+export const maybePrependCsvHeader = prependHeader;
