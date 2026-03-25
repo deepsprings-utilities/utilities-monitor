@@ -5,7 +5,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "acquisuite-ingest",
-	// Optional fallback if GitHub Actions stops passing CLOUDFLARE_ACCOUNT_ID (e.g. environment-scoped secrets).
+	// Optional fallback if CI does not inject CLOUDFLARE_ACCOUNT_ID (e.g. environment-scoped secrets).
 	// Uncomment and paste your 32-char hex Account ID from Cloudflare (Workers overview → sidebar).
 	 "account_id": "f7f996fe44d2357c780ab8f8d5a40b86",
 	"main": "src/index.js",
@@ -20,7 +20,9 @@
 		{ "binding": "BUCKET", "bucket_name": "ds-acquisuite-raw" }
 	],
 	/**
-	 * Set to "0" or "false" in the dashboard to store HTTP uploads as-is (no CSV header line).
+	 * PREPEND_CSV_HEADERS: "0" or "false" disables prepending a CSV header row into .log.gz.
+	 * DEFAULT_CSV_HEADER_MB: e.g. "004" — use when AcquiSuite filenames do NOT contain mb-001…mb-009.
+	 *   Without this, the Worker cannot pick a row from mb-csv-header-lines.json and leaves uploads unchanged.
 	 */
 	"vars": {
 		"PREPEND_CSV_HEADERS": "1"
