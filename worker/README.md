@@ -4,6 +4,21 @@ Cloudflare Worker (see `src/index.js`) that accepts uploads from an AcquiSuite d
 
 Run **`npm install` / `wrangler deploy` from this `worker/` directory** (or set CI `working-directory` to `worker`).
 
+### “Workers Builds: acquisuite-ingest” (dashboard / email)
+
+That text is the **title** for Cloudflare’s **Workers Builds** product — the **Git-connected** deploy path in the dashboard — not the full error message.
+
+This repo already deploys via **GitHub Actions** (`.github/workflows/deploy-worker.yml`). If you **also** connected the same GitHub repo under **Worker → Settings → Build**, **every push can run two deploys**; the Cloudflare one often **fails in monorepos** because Builds defaults to the **repository root**, where there is **no** `wrangler.jsonc` (it lives under `worker/`).
+
+**Pick one:**
+
+| Approach | What to do |
+|----------|------------|
+| **GitHub Actions only** (recommended here) | In Cloudflare: **Workers & Pages → acquisuite-ingest → Settings → Build** — **disconnect** the Git repo or disable automatic Workers Builds so only Actions deploys. |
+| **Workers Builds only** | Same **Settings → Build**: set **Root directory** to `worker`, **Deploy command** to `npx wrangler deploy` (and **Build command** to `npm ci` if needed). You can then turn off the GitHub deploy workflow if you want a single pipeline. |
+
+For the real failure reason, open **Deployments → View build history** (or the failed run) and read the **log lines below** that title — not the duplicated “Workers Builds: …” heading.
+
 ### How the Worker behaves
 
 - **Methods**
@@ -33,14 +48,18 @@ AcquiSuite uses **different export profiles** for “push to FTP/file server” 
 
 ### CSV header prepending (optional, on by default)
 
-The Worker can **prepend a tab-separated header line** that matches your site’s known column layouts (same source as `../neon-loader/schema-column-orders.json`), when:
+Canonical header lines per MB device are in **`src/mb-csv-header-lines.json`** (regenerated via `scripts/build-mb-csv-headers.mjs`).
 
-1. The **LOGFILE** filename contains `mb-001` … `mb-009` (device id), and  
-2. After gunzip, the payload **does not** already start with `time(UTC)`.
+When `PREPEND_CSV_HEADERS` is enabled (default):
 
-When a header is prepended, R2 object metadata includes `csv_header_prepended=true` and `csv_header_mb=<code>`.
+1. The Worker picks the canonical row from **`mb-csv-header-lines.json`** using:
+   - **`mb-001` … `mb-999` in the LOGFILE filename** (also `mb-1` → `001`), **or**
+   - Worker variable **`DEFAULT_CSV_HEADER_MB`** (e.g. `004`) when filenames from AcquiSuite **do not** include `mb-…` — set this in **Wrangler `vars`** or Cloudflare **Worker → Settings → Variables** so HTTP uploads still get a header row.
+2. After gunzip, the Worker **scans the first ~12 lines** for a row that **exactly matches** that canonical header (normalized: tab-separated, trimmed cells). If a match is found (including after a junk line before the real header), **nothing is prepended**; metadata includes `csv_header_matched=true` and `csv_header_mb=<code>`.
+3. If **no** matching header row is found, the Worker **prepends** the canonical line from the JSON. Metadata includes `csv_header_prepended=true` and `csv_header_mb=<code>`.
 
-- **Disable** in Cloudflare: Worker → Settings → Variables → `PREPEND_CSV_HEADERS` = `0` or `false`.
+- **No header row inside the `.log.gz` in R2?** Check R2 metadata on the object: if there is **no** `csv_header_prepended` / `csv_header_matched`, the Worker did not know which MB row to use (add **`DEFAULT_CSV_HEADER_MB`**) or prepending is off (`PREPEND_CSV_HEADERS`), or the file is not gzip.
+- **Disable** prepending in Cloudflare: Worker → Settings → Variables → `PREPEND_CSV_HEADERS` = `0` or `false`.
 - **Regenerate** header strings after changing column lists:
 
 ```bash
@@ -48,6 +67,24 @@ node scripts/build-mb-csv-headers.mjs
 ```
 
 Then redeploy the Worker.
+
+## Testing header matching and CSV prepending
+
+**Automated (Vitest):** from `worker/`:
+
+```bash
+npm test
+```
+
+This runs `test/csv-header.spec.js` (normalized header equality, junk line before header, gzip + `maybePrependCsvHeader` matched vs prepended) and a small smoke test on `GET`.
+
+**Manual (live Worker):** from `worker/`:
+
+```bash
+wrangler dev
+```
+
+Then send a multipart POST with a `LOGFILE` part (gzip body). Check R2 object metadata: `csv_header_matched` vs `csv_header_prepended`, or gunzip the object and confirm the first data line is the canonical header from `mb-csv-header-lines.json` when prepending ran.
 
 ## Deploy locally (Wrangler)
 
@@ -63,14 +100,16 @@ This repo includes a workflow at `.github/workflows/deploy-worker.yml`.
 
 Under **Settings → Secrets and variables → Actions**:
 
-**Common mistakes**
+**GitHub Actions secrets (case-sensitive):**
 
-- **Secrets vs Variables:** The **API token** must be a **Secret** named `CLOUDFLARE_API_TOKEN`. The **Account ID** can be a **Secret or Variable** named `CLOUDFLARE_ACCOUNT_ID` (the workflow merges both in bash).
-- **Environment-scoped secrets:** If the Account ID secret is attached to a GitHub **Environment** (e.g. `production`), it is **empty** unless the job declares `environment: production`. Either move the secret to repository-level, or add that key to `.github/workflows/deploy-worker.yml` under `jobs.deploy`.
-- **Fallback:** Uncomment `"account_id"` in `wrangler.jsonc` and paste your 32-char hex Account ID (safe to commit; Wrangler uses it when `CLOUDFLARE_ACCOUNT_ID` is unset).
+- **`CLOUDFLARE_API_TOKEN`** (**Secret**): API token with **Workers:Edit** (and R2 if needed).
+- **`CLOUDFLARE_ACCOUNT_ID`** (**Secret or Variable**): 32-character hex **Account ID** (Workers overview sidebar — not Zone ID).
 
-- `CLOUDFLARE_API_TOKEN` (**Secret**): Cloudflare API token with **Workers:Edit** (and any R2 permissions you use)
-- `CLOUDFLARE_ACCOUNT_ID` (**Secret or Variable**): 32-character hex **Account ID** from the Cloudflare dashboard (Workers overview sidebar — not Zone ID)
+**Common issues**
+
+- **Secrets vs Variables:** Account ID can be a **Variable** with the same name; the workflow merges secret first, then variable.
+- **Environment-scoped secrets:** If a secret is only on a GitHub **Environment**, add `environment: <name>` to `jobs.deploy`, or use repository-level secrets.
+- **Fallback:** Uncomment `"account_id"` in `wrangler.jsonc` if CI cannot provide `CLOUDFLARE_ACCOUNT_ID` (safe to commit).
 
 ## Required Worker config
 

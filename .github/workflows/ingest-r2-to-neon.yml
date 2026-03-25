@@ -14,11 +14,15 @@ jobs:
       run:
         working-directory: neon-loader
     env:
-      # Avoid `${{ secrets || vars }}` — merge in shell (see Merge step below).
-      _CF_ACCOUNT_ID_FROM_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      _CF_ACCOUNT_ID_FROM_VAR: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # R2 keys: pass repository Secrets straight into env (reliable). Do not rely only on a merge step.
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      # Account id: Secret or Variable (different GitHub tabs) — merged in the step below.
+      _CF_ACCOUNT_ID_FROM_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      _CF_ACCOUNT_ID_FROM_VAR: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # Optional: Variables-only R2 keys if secrets are empty (name must match exactly).
+      _CF_R2_AKI_VAR: ${{ vars.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      _CF_R2_SAK_VAR: ${{ vars.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
       R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       INGEST_PREFIX: ${{ vars.INGEST_PREFIX || 'log-gz/' }}
@@ -27,15 +31,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Merge CLOUDFLARE_ACCOUNT_ID (secret or variable)
+      - name: Merge CLOUDFLARE_ACCOUNT_ID; optional R2 var fallback
         working-directory: ${{ github.workspace }}
         run: |
-          s="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_SECRET}" | tr -d ' \n\r\t')"
-          v="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_VAR}" | tr -d ' \n\r\t')"
-          if [ -n "$s" ]; then echo "CLOUDFLARE_ACCOUNT_ID=$s" >> "$GITHUB_ENV"
-          elif [ -n "$v" ]; then echo "CLOUDFLARE_ACCOUNT_ID=$v" >> "$GITHUB_ENV"
+          pick_two() {
+            s="$(printf '%s' "$1" | tr -d ' \n\r\t')"
+            v="$(printf '%s' "$2" | tr -d ' \n\r\t')"
+            if [ -n "$s" ]; then printf '%s' "$s"
+            elif [ -n "$v" ]; then printf '%s' "$v"
+            fi
+          }
+          acct="$(pick_two "${_CF_ACCOUNT_ID_FROM_SECRET}" "${_CF_ACCOUNT_ID_FROM_VAR}")"
+          if [ -n "$acct" ]; then
+            printf '%s\n' "CLOUDFLARE_ACCOUNT_ID=${acct}" >> "$GITHUB_ENV"
           fi
-          echo "len_secret=${#s} len_var=${#v} (diagnostic; 0 means GitHub did not inject)"
+          # If secrets did not inject R2 keys, try Variables (same names under the Variables tab).
+          if [ -z "${CLOUDFLARE_R2_ACCESS_KEY_ID}" ]; then
+            v="$(printf '%s' "${_CF_R2_AKI_VAR}" | tr -d ' \n\r\t')"
+            [ -n "$v" ] && printf 'CLOUDFLARE_R2_ACCESS_KEY_ID=%s\n' "$v" >> "$GITHUB_ENV"
+          fi
+          if [ -z "${CLOUDFLARE_R2_SECRET_ACCESS_KEY}" ]; then
+            v="$(printf '%s' "${_CF_R2_SAK_VAR}" | tr -d ' \n\r\t')"
+            [ -n "$v" ] && printf 'CLOUDFLARE_R2_SECRET_ACCESS_KEY=%s\n' "$v" >> "$GITHUB_ENV"
+          fi
+          echo "len_acct secret=${#_CF_ACCOUNT_ID_FROM_SECRET} var=${#_CF_ACCOUNT_ID_FROM_VAR}"
+          echo "len_r2_key from_secrets=${#CLOUDFLARE_R2_ACCESS_KEY_ID} var_tab=${#_CF_R2_AKI_VAR} (GITHUB_ENV fallback applies to later steps only)"
+          echo "len_r2_secret from_secrets=${#CLOUDFLARE_R2_SECRET_ACCESS_KEY} var_tab=${#_CF_R2_SAK_VAR}"
 
       - name: Setup Node
         uses: actions/setup-node@v4

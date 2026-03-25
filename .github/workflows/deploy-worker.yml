@@ -13,14 +13,12 @@ jobs:
         defaults:
             run:
                 working-directory: worker
-        # Do NOT use `${{ secrets.X || vars.Y }}` for account id — GitHub can mishandle that
-        # expression. Pass secret and variable separately; bash picks the first non-empty.
+        # Pass secrets/vars separately; bash merges account id (avoid `${{ secrets || vars }}` quirks).
+        # Wrangler reads CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID from the environment.
         env:
             CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
             _CF_ACCOUNT_ID_FROM_SECRET: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
             _CF_ACCOUNT_ID_FROM_VAR: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        # Wrangler validates account id strictly; neon-loader only builds a URL, so trailing
-        # newlines / spaces in the GitHub secret can break deploy while R2 ingest still works.
         steps:
             - name: Checkout
               uses: actions/checkout@v4
@@ -35,23 +33,21 @@ jobs:
             - name: Install dependencies
               run: npm ci
 
-            # Lengths only (no values). If len_secret=0 but the UI shows a secret, it is often:
-            # - Secret is scoped to a GitHub **Environment** → add `environment: <name>` to this job
-            # - Secret lives on another repo / fork
-            # - Organization secret not granted to this repository
-            - name: Cloudflare account id — diagnostic (lengths only)
+            - name: Credential diagnostics (lengths only)
               run: |
                   echo "repo=${{ github.repository }} event=${{ github.event_name }} ref=${{ github.ref }}"
+                  echo "len_secret_CLOUDFLARE_API_TOKEN=${#CLOUDFLARE_API_TOKEN}"
                   echo "len_secret_CLOUDFLARE_ACCOUNT_ID=${#_CF_ACCOUNT_ID_FROM_SECRET}"
                   echo "len_var_CLOUDFLARE_ACCOUNT_ID=${#_CF_ACCOUNT_ID_FROM_VAR}"
-                  echo "If len_secret is 0, GitHub did not inject the secret into this job (environment scoping, org access, or wrong repo)."
+                  echo "If lengths are 0, add repository Secrets/Variables (CLOUDFLARE_*), or set jobs.deploy.environment for environment-scoped secrets."
 
             - name: Check Cloudflare credentials
               run: |
                   set -e
                   merge_account_id() {
-                    local s="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_SECRET}" | tr -d ' \n\r\t')"
-                    local v="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_VAR}" | tr -d ' \n\r\t')"
+                    trim() { printf '%s' "$1" | tr -d ' \n\r\t'; }
+                    local s="$(trim "${_CF_ACCOUNT_ID_FROM_SECRET}")"
+                    local v="$(trim "${_CF_ACCOUNT_ID_FROM_VAR}")"
                     if [ -n "${s}" ]; then printf '%s' "${s}"; elif [ -n "${v}" ]; then printf '%s' "${v}"; fi
                   }
                   TOKEN="$(printf '%s' "${CLOUDFLARE_API_TOKEN}" | tr -d '\n\r')"
@@ -62,30 +58,27 @@ jobs:
                   fi
                   if [ -z "${ACCT}" ]; then
                     if grep -qE '^[[:space:]]*"account_id"[[:space:]]*:[[:space:]]*"[a-fA-F0-9]{32}"' wrangler.jsonc; then
-                      echo "CLOUDFLARE_ACCOUNT_ID not in env; using account_id from wrangler.jsonc."
+                      echo "No CLOUDFLARE_ACCOUNT_ID in GitHub; using account_id from wrangler.jsonc."
                     else
-                      echo "::error::No Cloudflare account id available. Fix one of: (1) Repository **Secret** CLOUDFLARE_ACCOUNT_ID (32 hex chars). (2) Or repository **Variable** with same name. (3) If this secret is tied to a GitHub **Environment**, add to this job: environment: <that-name>. (4) Or set \"account_id\" in worker/wrangler.jsonc (safe to commit)."
+                      echo "::error::No account id. Add Secret or Variable **CLOUDFLARE_ACCOUNT_ID** (32 hex), or job **environment:** for environment-scoped secrets, or \"account_id\" in worker/wrangler.jsonc."
                       exit 1
                     fi
                   elif ! printf '%s' "${ACCT}" | grep -qE '^[a-fA-F0-9]{32}$'; then
-                    echo "::error::CLOUDFLARE_ACCOUNT_ID must be exactly 32 hex characters (no quotes). Got length ${#ACCT} after trim."
+                    echo "::error::CLOUDFLARE_ACCOUNT_ID must be exactly 32 hex characters after trim. Got length ${#ACCT}."
                     exit 1
                   else
-                    echo "CLOUDFLARE_ACCOUNT_ID present from GitHub (format OK)."
+                    echo "CLOUDFLARE_ACCOUNT_ID format OK."
                   fi
 
             - name: Deploy
               run: |
                   merge_account_id() {
-                    local s="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_SECRET}" | tr -d ' \n\r\t')"
-                    local v="$(printf '%s' "${_CF_ACCOUNT_ID_FROM_VAR}" | tr -d ' \n\r\t')"
+                    trim() { printf '%s' "$1" | tr -d ' \n\r\t'; }
+                    local s="$(trim "${_CF_ACCOUNT_ID_FROM_SECRET}")"
+                    local v="$(trim "${_CF_ACCOUNT_ID_FROM_VAR}")"
                     if [ -n "${s}" ]; then printf '%s' "${s}"; elif [ -n "${v}" ]; then printf '%s' "${v}"; fi
                   }
-                  ACCT="$(merge_account_id)"
-                  if [ -n "${ACCT}" ]; then
-                    export CLOUDFLARE_ACCOUNT_ID="${ACCT}"
-                  else
-                    unset CLOUDFLARE_ACCOUNT_ID
-                  fi
                   export CLOUDFLARE_API_TOKEN="$(printf '%s' "${CLOUDFLARE_API_TOKEN}" | tr -d '\n\r')"
+                  ACCT="$(merge_account_id)"
+                  if [ -n "${ACCT}" ]; then export CLOUDFLARE_ACCOUNT_ID="${ACCT}"; else unset CLOUDFLARE_ACCOUNT_ID; fi
                   npx wrangler deploy
