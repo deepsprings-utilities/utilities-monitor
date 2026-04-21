@@ -27,6 +27,8 @@ jobs:
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       INGEST_PREFIX: ${{ vars.INGEST_PREFIX || 'log-gz/' }}
       INGEST_BATCH_LIMIT: ${{ vars.INGEST_BATCH_LIMIT || '200' }}
+      # Rows per INSERT for raw + tall tables (neon-loader INSERT_BATCH_ROWS); optional repo Variable.
+      INSERT_BATCH_ROWS: ${{ vars.INSERT_BATCH_ROWS || '250' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
