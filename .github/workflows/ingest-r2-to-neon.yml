@@ -71,5 +71,20 @@ jobs:
       - name: Run migrations
         run: npm run migrate
 
+      # Job env + GITHUB_ENV merges apply here — fail before ingest with a clear hint.
+      - name: Validate R2 credentials for neon-loader
+        run: |
+          len_aki=${#CLOUDFLARE_R2_ACCESS_KEY_ID}
+          len_sak=${#CLOUDFLARE_R2_SECRET_ACCESS_KEY}
+          echo "len_CLOUDFLARE_R2_ACCESS_KEY_ID=${len_aki} len_CLOUDFLARE_R2_SECRET_ACCESS_KEY=${len_sak}"
+          if [ "${len_aki}" -eq 0 ]; then
+            echo "::error::CLOUDFLARE_R2_ACCESS_KEY_ID is empty after merge. In the repo → Settings → Secrets and variables → Actions → Secrets: add CLOUDFLARE_R2_ACCESS_KEY_ID (Cloudflare Dashboard → R2 → Manage R2 API Tokens — Access Key ID). Name must match exactly; do not put only the Secret Access Key."
+            exit 1
+          fi
+          if [ "${len_sak}" -eq 0 ]; then
+            echo "::error::CLOUDFLARE_R2_SECRET_ACCESS_KEY is empty. Add the paired Secret Access Key as a repository Secret with that exact name."
+            exit 1
+          fi
+
       - name: Run ingestion
         run: npm run ingest

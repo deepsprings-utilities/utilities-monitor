@@ -50,6 +50,7 @@ async function main() {
         continue;
       }
 
+      console.log(`processing key=${object.key}`);
       const bytes = await getR2ObjectBytes(r2, { bucket, key: object.key });
       const schema = (labelMapConfig.schemas || {})[label.schemaId] || {};
       // Strict header allowlists can drop every column if filenames/eras don't match exactly.
@@ -104,6 +105,9 @@ async function main() {
         await markProcessed(client, { r2Key: object.key, etag, runId });
       });
       stats.succeeded += 1;
+      console.log(
+        `ingested key=${object.key} rows=${parsed.rawRecords.length} tall=${parsed.tallRows.length} label=${label.labelCode}`,
+      );
     } catch (error) {
       stats.failed += 1;
       console.error(`failed key=${object.key} message=${error.message}`);

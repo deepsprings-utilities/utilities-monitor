@@ -36,6 +36,7 @@ Each device entry should include:
   - `LABEL_MAP_PATH` (default: `./label-map.json`)
   - `DRY_RUN=1` (parse-only, no DB writes)
   - `STRICT_SCHEMA=1` (optional: only allow columns listed under `schemas` in `label-map.json`; default is **off** so parsing matches the legacy “all meter columns” behavior)
+  - `INSERT_BATCH_ROWS` (default: `250`) — how many `ingest_raw_record` / `utility_measurement_tall` rows to send per `INSERT` (higher = fewer DB round-trips; cap 5000 to stay under Postgres parameter limits)
 
 ## Local Run
 
