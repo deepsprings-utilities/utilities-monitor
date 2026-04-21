@@ -8,6 +8,8 @@ on:
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    # Catch-up ingest can exceed the default timeout; GitHub-hosted max is 360 minutes.
+    timeout-minutes: 360
     permissions:
       contents: read
     defaults:
@@ -26,6 +28,7 @@ jobs:
       R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       INGEST_PREFIX: ${{ vars.INGEST_PREFIX || 'log-gz/' }}
+      # Max R2 objects per workflow run (raise repository Variable INGEST_BATCH_LIMIT for backlog catch-up).
       INGEST_BATCH_LIMIT: ${{ vars.INGEST_BATCH_LIMIT || '200' }}
       # Rows per INSERT for raw + tall tables (neon-loader INSERT_BATCH_ROWS); optional repo Variable.
       INSERT_BATCH_ROWS: ${{ vars.INSERT_BATCH_ROWS || '250' }}

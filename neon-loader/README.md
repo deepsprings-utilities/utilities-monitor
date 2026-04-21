@@ -32,7 +32,7 @@ Each device entry should include:
 - `NEON_DATABASE_URL`
 - Optional:
   - `INGEST_PREFIX` (default: `log-gz/`)
-  - `INGEST_BATCH_LIMIT` (default: `200`)
+  - `INGEST_BATCH_LIMIT` (default: `200`) — **maximum R2 objects to process in one ingest run**. Listing is paginated across the bucket; raise this (e.g. `2000`, `5000`) for backlog catch-up. Each hourly scheduled run drains up to this many keys; backlog may need multiple runs or a larger limit (GitHub Actions jobs time out after **360 minutes** unless lowered).
   - `LABEL_MAP_PATH` (default: `./label-map.json`)
   - `DRY_RUN=1` (parse-only, no DB writes)
   - `STRICT_SCHEMA=1` (optional: only allow columns listed under `schemas` in `label-map.json`; default is **off** so parsing matches the legacy “all meter columns” behavior)

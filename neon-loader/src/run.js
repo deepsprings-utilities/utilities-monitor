@@ -35,7 +35,9 @@ async function main() {
     succeeded: 0,
     failed: 0,
   };
-  console.log(`run_id=${runId} listed=${objects.length} dry_run=${dryRun}`);
+  console.log(
+    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} listed=${objects.length} dry_run=${dryRun}`,
+  );
 
   for (const object of objects) {
     const etag = object.etag || "no_etag";
