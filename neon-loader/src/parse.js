@@ -71,6 +71,15 @@ function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCo
     const rawText = lines[i];
     let cols = splitRow(rawText);
     if (cols.length === 0) continue;
+
+    // Some feeds mix delimiters (for example tab header row with comma data rows).
+    // If header-selected splitter yields a single cell, retry using data-line detection.
+    if (cols.length <= 1 && headers.length > 1) {
+      const altSplit = detectDelimiterDataLine(rawText).splitRow;
+      const altCols = altSplit(rawText);
+      if (altCols.length > cols.length) cols = altCols;
+    }
+
     cols = padOrTruncateCols(cols, headers.length);
 
     const row = buildRowObject(headers, cols);

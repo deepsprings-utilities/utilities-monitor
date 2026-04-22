@@ -95,3 +95,18 @@ test("parseGzipLog handles tab-separated AcquiSuite CSV with quoted time cell", 
   assert.equal(result.rawRecords[0].recordTs, "2026-02-23T20:45:00.000Z");
   assert.ok(result.tallRows.length >= 1);
 });
+
+
+test("parseGzipLog handles tab header with comma-separated data rows", () => {
+  const payload = [
+    "time(UTC)	error	lowalarm	highalarm	Solar Array Power (kWh)",
+    "'2026-04-22 18:00:00',0,0,0,12.5",
+  ].join("\n");
+  const gzip = gzipSync(Buffer.from(payload, "utf8"));
+  const result = parseGzipLog(gzip);
+
+  assert.equal(result.rawRecords.length, 1);
+  assert.equal(result.rawRecords[0].lineNo, 2);
+  assert.equal(result.rawRecords[0].recordTs, "2026-04-22T18:00:00.000Z");
+  assert.ok(result.tallRows.some((r) => r.metricValue === 12.5));
+});
