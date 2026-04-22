@@ -157,6 +157,43 @@
             "countRows": false
           }
         }
+      },
+      {
+        "id": 5,
+        "type": "table",
+        "title": "Flagged in Notes (Due now / Past due)",
+        "description": "Rows where Notes suggests immediate attention; validate against DWW.",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 33
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  source_file,\n  ps_code,\n  analyte_name,\n  notes,\n  next_due_date,\n  next_due_raw\nFROM water_sampling_schedule\nWHERE notes IS NOT NULL\n  AND (\n    UPPER(notes) LIKE '%DUE NOW%'\n    OR UPPER(notes) LIKE '%PAST DUE%'\n  )\nORDER BY source_file, ps_code, analyte_name",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "sm",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
       }
     ]
   },
