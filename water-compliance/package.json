@@ -1,0 +1,12 @@
+{
+  "name": "water-compliance",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "import-schedule": "node scripts/import-schedule-csv.mjs",
+    "import-lead-copper": "node scripts/import-lead-copper-csv.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

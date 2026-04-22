@@ -1,0 +1,83 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "hydro-power-output",
+    "title": "Hydro Power Output",
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "1m",
+    "tags": [
+      "acquisuite",
+      "hydro",
+      "neon"
+    ],
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "type": "timeseries",
+        "title": "Hydro Power Instantaneous (kW)",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  record_ts AS \"time\",\n  metric_value AS \"value\",\n  CONCAT(serial, ' / ', source_system) AS metric\nFROM utility_measurement_tall\nWHERE $__timeFilter(record_ts)\n  AND metric_key = 'power_instantaneous'\n  AND source_system = 'hydro_plant'\nORDER BY 1",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "kw"
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "type": "table",
+        "title": "Latest Hydro Metrics (Last 24h)",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 12,
+          "w": 24,
+          "x": 0,
+          "y": 10
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  record_ts,\n  serial,\n  metric_key,\n  metric_value,\n  unit,\n  source_system,\n  physical_group\nFROM utility_measurement_tall\nWHERE record_ts >= NOW() - INTERVAL '24 hours'\n  AND (source_system = 'hydro_plant' OR physical_group = 'hydro_plant')\nORDER BY record_ts DESC\nLIMIT 500",
+            "refId": "A"
+          }
+        ]
+      }
+    ]
+  },
+  "folderUid": null,
+  "overwrite": true,
+  "message": "Automated upsert from neon-loader"
+}

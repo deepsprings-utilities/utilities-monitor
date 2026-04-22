@@ -6,7 +6,9 @@
   "scripts": {
     "ingest": "node src/run.js",
     "migrate": "node src/migrate.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "grafana:push": "node scripts/push-grafana-dashboard.mjs",
+    "grafana:dry-run": "node scripts/push-grafana-dashboard.mjs --dry-run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.918.0",

@@ -52,6 +52,26 @@ Dry run:
 DRY_RUN=1 npm run ingest
 ```
 
+## Grafana dashboard automation
+
+`neon-loader` includes a Grafana dashboard template at `grafana/dashboard.hydro-power.json` and an upsert script:
+
+```bash
+npm run grafana:push
+```
+
+Required environment variables:
+
+- `GRAFANA_URL` (for example `https://grafana.example.com`)
+- `GRAFANA_TOKEN` (API token with dashboard write scope)
+- `GRAFANA_DATASOURCE_UID` (Grafana Postgres datasource UID)
+
+Dry-run validation (no API write):
+
+```bash
+npm run grafana:dry-run
+```
+
 ## Database Objects
 
 Migrations create:
@@ -60,6 +80,7 @@ Migrations create:
 - `utility_measurement_tall`
 - `ingest_checkpoint`
 - `schema_migrations`
+- optional: `water_sampling_schedule` (water compliance CSV imports — see [`../water-compliance/README.md`](../water-compliance/README.md))
 
 ## Raw rows but no `utility_measurement_tall` rows
 
