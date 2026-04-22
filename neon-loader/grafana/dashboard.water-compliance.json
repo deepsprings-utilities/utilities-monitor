@@ -1,0 +1,166 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "water-compliance-schedule",
+    "title": "Water sampling compliance",
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "5m",
+    "tags": ["water", "compliance", "neon"],
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "type": "table",
+        "title": "Imports by source",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 14,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  source_file AS source,\n  COUNT(*)::bigint AS rows,\n  MAX(imported_at) AS last_import\nFROM water_sampling_schedule\nGROUP BY source_file\nORDER BY source_file",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "sm",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
+      },
+      {
+        "id": 2,
+        "type": "table",
+        "title": "Lead / Copper schedule",
+        "description": "Rows imported via import-lead-copper-csv (group_name = LEAD_COPPER).",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 10,
+          "x": 14,
+          "y": 0
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  notes,\n  ps_code,\n  source_file,\n  imported_at\nFROM water_sampling_schedule\nWHERE group_name = 'LEAD_COPPER'\nORDER BY analyte_name",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "sm",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
+      },
+      {
+        "id": 3,
+        "type": "table",
+        "title": "Due within 120 days",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 12,
+          "w": 24,
+          "x": 0,
+          "y": 7
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date <= (CURRENT_DATE + INTERVAL '120 days')::date\nORDER BY next_due_date ASC, source_file, ps_code, analyte_name",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "sm",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
+      },
+      {
+        "id": 4,
+        "type": "table",
+        "title": "Full schedule (all sources)",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 14,
+          "w": 24,
+          "x": 0,
+          "y": 19
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes,\n  imported_at\nFROM water_sampling_schedule\nORDER BY source_file, ps_code, group_name, analyte_name",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "sm",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
+      }
+    ]
+  },
+  "folderUid": null,
+  "overwrite": true,
+  "message": "Automated upsert from neon-loader (water compliance)"
+}

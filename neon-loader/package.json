@@ -8,6 +8,7 @@
     "migrate": "node src/migrate.js",
     "test": "node --test test/*.test.js",
     "grafana:push": "node scripts/push-grafana-dashboard.mjs",
+    "grafana:push:water": "node scripts/push-grafana-dashboard.mjs --dashboard grafana/dashboard.water-compliance.json",
     "grafana:dry-run": "node scripts/push-grafana-dashboard.mjs --dry-run"
   },
   "dependencies": {
