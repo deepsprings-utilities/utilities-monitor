@@ -61,6 +61,28 @@ Migrations create:
 - `ingest_checkpoint`
 - `schema_migrations`
 
+## Raw rows but no `utility_measurement_tall` rows
+
+Possible causes:
+
+1. **`hasData: false`** in [`label-map.json`](label-map.json) for that `mb-XXX` device (ModHopper status devices). Raw rows are still inserted; **`utility_measurement_tall` is skipped intentionally.** Ingest logs: `skip_utility_measurement_tall … reason=hasData_false`.
+
+2. **Parser produced no tall metrics** (`tall_rows=0`): strict header mode (`STRICT_SCHEMA=1`), loose `col_*` parsing only, headerless export without matching `schemaId` + `schema-column-orders.json`, or non-numeric meter cells.
+
+3. **Tall metrics exist but no `record_ts`**: timestamps in the source column cannot be parsed; those rows are not inserted. Check ingest warnings mentioning `record_ts`.
+
+Use this to compare counts per uploaded file:
+
+```sql
+SELECT f.id, f.r2_key, f.ingested_at,
+  (SELECT COUNT(*) FROM ingest_raw_record r WHERE r.file_id = f.id) AS raw_rows,
+  (SELECT COUNT(*) FROM utility_measurement_tall t WHERE t.source_file_id = f.id) AS tall_rows
+FROM ingest_raw_file f
+WHERE f.parse_status = 'parsed'
+ORDER BY f.ingested_at DESC
+LIMIT 50;
+```
+
 ## Replay
 
 To replay a file version, delete its checkpoint row:

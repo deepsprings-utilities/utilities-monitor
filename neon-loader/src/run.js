@@ -96,6 +96,11 @@ async function main() {
         await insertRawRecords(client, fileId, parsed.rawRecords, label);
         if (label.hasData) {
           const tallWithTs = parsed.tallRows.filter((r) => r.recordTs).length;
+          if (parsed.rawRecords.length > 0 && parsed.tallRows.length === 0) {
+            console.warn(
+              `warning key=${object.key} device=${label.deviceAddress} schemaId=${label.schemaId} raw_rows=${parsed.rawRecords.length} tall_rows=0 (no measurable numeric columns — strict schema, loose parse, or non-numeric cells)`,
+            );
+          }
           if (parsed.tallRows.length > 0 && tallWithTs === 0) {
             const sample = parsed.rawRecords[0]?.parsedJson || {};
             console.warn(
@@ -103,6 +108,10 @@ async function main() {
             );
           }
           await insertTallRows(client, fileId, serial, parsed.tallRows, label);
+        } else {
+          console.warn(
+            `skip_utility_measurement_tall key=${object.key} label=${label.labelCode} device=${label.deviceAddress} reason=hasData_false (ingest_raw_record still written)`,
+          );
         }
         await markProcessed(client, { r2Key: object.key, etag, runId });
       });
