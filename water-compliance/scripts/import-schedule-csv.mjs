@@ -138,7 +138,7 @@ async function main() {
       last_sampled: lastSampled,
       frequency_months: parseFrequencyMonths(cells[idx["frequency"]]),
       next_due_date: nextDueDate,
-      next_due_raw: nextDueParsed ?? String(nextRaw ?? "").trim() || null,
+      next_due_raw: (nextDueParsed ?? String(nextRaw ?? "").trim()) || null,
       notes,
     });
   }
