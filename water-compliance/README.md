@@ -24,17 +24,26 @@ From `water-compliance/`:
 ```bash
 npm install
 export NEON_DATABASE_URL="postgresql://..."
-node scripts/import-schedule-csv.mjs "/path/to/LAST AND NEXT SAMPLE REPORT.csv" --source-name last-next-main
+node scripts/import-schedule-csv.mjs "/path/to/ACTIVE-LAST-AND-NEXT-SAMPLE-REPORT.csv"
+node scripts/import-schedule-csv.mjs "/path/to/STANDBY-LAST-AND-NEXT-SAMPLE-REPORT.csv"
 ```
 
-Re-importing the same `--source-name` **replaces** rows for that source (full refresh).
+Re-importing the same file name **replaces** rows for that source (full refresh), because
+`source_file` is always set to the CSV filename.
+
+### Active vs standby wells
+
+- Keep `active` and `standby` in the CSV filenames.
+- Import each well's schedule CSV separately.
+- The imported `source_file` will match the filename exactly, so Grafana can filter/report by well.
 
 ### Lead/Copper two-column import
 
 ```bash
 export NEON_DATABASE_URL="postgresql://..."
 # optional: export LEAD_COPPER_PS_CODE="CA1400068_DST_LCR"
-node scripts/import-lead-copper-csv.mjs "/path/to/lead-copper.csv" --source-name lead-copper
+node scripts/import-lead-copper-csv.mjs "/path/to/active-lead-copper.csv"
+node scripts/import-lead-copper-csv.mjs "/path/to/standby-lead-copper.csv"
 ```
 
 Example CSV:
@@ -55,10 +64,22 @@ COPPER,09-30-2027
 **Table panel — upcoming deadlines**
 
 ```sql
-SELECT ps_code, analyte_name, next_due_date, next_due_raw, last_sampled, notes, source_file
+SELECT
+  CASE
+    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'
+    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'
+    ELSE 'unclassified'
+  END AS well,
+  ps_code,
+  analyte_name,
+  next_due_date,
+  next_due_raw,
+  last_sampled,
+  notes,
+  source_file
 FROM water_sampling_schedule
 WHERE next_due_date IS NOT NULL AND next_due_date <= CURRENT_DATE + INTERVAL '120 days'
-ORDER BY next_due_date NULLS LAST, ps_code, analyte_name;
+ORDER BY well, next_due_date NULLS LAST, ps_code, analyte_name;
 ```
 
 **Alert — order window (example: due within 45 days)**

@@ -68,7 +68,7 @@
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  notes,\n  ps_code,\n  source_file,\n  imported_at\nFROM water_sampling_schedule\nWHERE group_name = 'LEAD_COPPER'\nORDER BY analyte_name",
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  notes,\n  ps_code,\n  source_file,\n  imported_at\nFROM water_sampling_schedule\nWHERE group_name = 'LEAD_COPPER'\nORDER BY well, analyte_name",
             "refId": "A"
           }
         ],
@@ -104,7 +104,7 @@
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date <= (CURRENT_DATE + INTERVAL '120 days')::date\nORDER BY next_due_date ASC, source_file, ps_code, analyte_name",
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date <= (CURRENT_DATE + INTERVAL '120 days')::date\nORDER BY well, next_due_date ASC, source_file, ps_code, analyte_name",
             "refId": "A"
           }
         ],
@@ -140,7 +140,7 @@
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes,\n  imported_at\nFROM water_sampling_schedule\nORDER BY source_file, ps_code, group_name, analyte_name",
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes,\n  imported_at\nFROM water_sampling_schedule\nORDER BY well, source_file, ps_code, group_name, analyte_name",
             "refId": "A"
           }
         ],
@@ -177,7 +177,7 @@
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  source_file,\n  ps_code,\n  analyte_name,\n  notes,\n  next_due_date,\n  next_due_raw\nFROM water_sampling_schedule\nWHERE notes IS NOT NULL\n  AND (\n    UPPER(notes) LIKE '%DUE NOW%'\n    OR UPPER(notes) LIKE '%PAST DUE%'\n  )\nORDER BY source_file, ps_code, analyte_name",
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  source_file,\n  ps_code,\n  analyte_name,\n  notes,\n  next_due_date,\n  next_due_raw\nFROM water_sampling_schedule\nWHERE notes IS NOT NULL\n  AND (\n    UPPER(notes) LIKE '%DUE NOW%'\n    OR UPPER(notes) LIKE '%PAST DUE%'\n  )\nORDER BY well, source_file, ps_code, analyte_name",
             "refId": "A"
           }
         ],

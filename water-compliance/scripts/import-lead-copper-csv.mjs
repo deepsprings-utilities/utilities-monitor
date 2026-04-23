@@ -9,7 +9,7 @@
  * with `next_due_date` left null.
  *
  * Usage:
- *   node scripts/import-lead-copper-csv.mjs path/to/lead-copper.csv [--source-name lead-copper]
+ *   node scripts/import-lead-copper-csv.mjs path/to/lead-copper.csv
  *
  * Env:
  *   NEON_DATABASE_URL (required)
@@ -115,18 +115,13 @@ async function main() {
   const filePath = process.argv[2];
   if (!filePath) {
     console.error(
-      "Usage: node import-lead-copper-csv.mjs <file.csv> [--source-name lead-copper]",
+      "Usage: node import-lead-copper-csv.mjs <file.csv>",
     );
     process.exit(1);
   }
-  let sourceName = path.basename(filePath);
-  const argv = process.argv.slice(3);
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--source-name" && argv[i + 1]) {
-      sourceName = argv[i + 1];
-      i += 1;
-    }
-  }
+  // Keep source_file aligned to the imported filename so active/standby
+  // schedule files remain distinct and traceable in Grafana.
+  const sourceName = path.basename(filePath);
 
   const conn = process.env.NEON_DATABASE_URL;
   if (!conn) throw new Error("Missing NEON_DATABASE_URL");

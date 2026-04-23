@@ -3,7 +3,7 @@
  * Export from Excel: Sheet1 → Save As CSV UTF-8 (first row may be title; headers start at row 2).
  *
  * Usage:
- *   node scripts/import-schedule-csv.mjs path/to/report.csv [--source-name report1]
+ *   node scripts/import-schedule-csv.mjs path/to/report.csv
  *
  * Requires NEON_DATABASE_URL (same as neon-loader).
  */
@@ -80,17 +80,12 @@ function parseFrequencyMonths(v) {
 async function main() {
   const filePath = process.argv[2];
   if (!filePath) {
-    console.error("Usage: node import-schedule-csv.mjs <file.csv> [--source-name name]");
+    console.error("Usage: node import-schedule-csv.mjs <file.csv>");
     process.exit(1);
   }
-  let sourceName = path.basename(filePath);
-  const extra = process.argv.slice(3);
-  for (let i = 0; i < extra.length; i += 1) {
-    if (extra[i] === "--source-name" && extra[i + 1]) {
-      sourceName = extra[i + 1];
-      i += 1;
-    }
-  }
+  // Keep source_file aligned to the imported filename so active/standby
+  // schedule files remain distinct and traceable in Grafana.
+  const sourceName = path.basename(filePath);
 
   const conn = process.env.NEON_DATABASE_URL;
   if (!conn) throw new Error("Missing NEON_DATABASE_URL");
