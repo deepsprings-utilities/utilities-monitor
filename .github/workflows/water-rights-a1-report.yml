@@ -1,0 +1,55 @@
+name: Water rights Template A1 report
+
+on:
+  schedule:
+    # Monthly on the 3rd, 14:15 UTC (~ morning US Pacific)
+    - cron: "15 14 3 * *"
+  workflow_dispatch:
+
+jobs:
+  a1-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: water-rights-report
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      REPORT_TZ: ${{ vars.WATER_RIGHTS_REPORT_TZ || 'America/Los_Angeles' }}
+      REPORT_YEAR: ${{ vars.WATER_RIGHTS_REPORT_YEAR || '' }}
+      REPORT_END: ${{ vars.WATER_RIGHTS_REPORT_END || '' }}
+      WATER_RIGHTS_SERIAL: ${{ vars.WATER_RIGHTS_SERIAL || '' }}
+      WATER_RIGHTS_FLOW_METRIC: ${{ vars.WATER_RIGHTS_FLOW_METRIC || 'flow_C' }}
+      BENEFICIAL_USE: ${{ vars.WATER_RIGHTS_BENEFICIAL_USE || '' }}
+      WATER_RIGHT: ${{ vars.WATER_RIGHTS_WATER_RIGHT || '' }}
+      REDIVERSION_STATUS: ${{ vars.WATER_RIGHTS_REDIVERSION_STATUS || '' }}
+      PLACE_OF_USE: ${{ vars.WATER_RIGHTS_PLACE_OF_USE || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: water-rights-report/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate workbook
+        run: npm run generate
+
+      - name: Upload to Google Drive
+        if: ${{ vars.WATER_RIGHTS_GOOGLE_DRIVE_FOLDER_ID != '' }}
+        env:
+          GOOGLE_DRIVE_FOLDER_ID: ${{ vars.WATER_RIGHTS_GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.WATER_RIGHTS_GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          OUT="$(ls -1 dist/*.xlsx | head -1)"
+          export UPLOAD_FILE="$OUT"
+          export UPLOAD_NAME="$(basename "$OUT")"
+          npm run upload-drive

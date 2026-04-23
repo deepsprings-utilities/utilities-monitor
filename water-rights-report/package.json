@@ -1,0 +1,17 @@
+{
+  "name": "water-rights-report",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "generate": "node generate-a1-report.mjs",
+    "upload-drive": "node upload-google-drive.mjs"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "googleapis": "^144.0.0",
+    "pg": "^8.13.1"
+  }
+}
