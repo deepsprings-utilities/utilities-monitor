@@ -2,46 +2,190 @@
   "dashboard": {
     "id": null,
     "uid": "water-compliance-schedule",
-    "title": "Water sampling compliance",
+    "title": "Water sampling — ops view",
+    "description": "Plain-language view for field and ops staff. “What to sample / order” is the test the lab needs. Refresh after each CSV import.",
     "timezone": "browser",
     "schemaVersion": 39,
     "version": 1,
     "refresh": "5m",
-    "tags": ["water", "compliance", "neon"],
+    "tags": ["water", "compliance", "neon", "ops"],
     "time": {
       "from": "now-30d",
       "to": "now"
     },
     "panels": [
       {
-        "id": 1,
+        "id": 10,
+        "type": "stat",
+        "title": "Overdue (past due date)",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(*)::int AS value\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date < CURRENT_DATE",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 1 },
+                { "color": "red", "value": 3 }
+              ]
+            },
+            "mappings": [],
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "options": {
+          "reduceOptions": {
+            "values": true,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "value",
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center"
+        }
+      },
+      {
+        "id": 11,
+        "type": "stat",
+        "title": "Due in next 45 days",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": { "h": 5, "w": 8, "x": 8, "y": 0 },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(*)::int AS value\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date >= CURRENT_DATE\n  AND next_due_date <= (CURRENT_DATE + INTERVAL '45 days')::date",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1 },
+                { "color": "orange", "value": 5 }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "options": {
+          "reduceOptions": {
+            "values": true,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "value",
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center"
+        }
+      },
+      {
+        "id": 12,
+        "type": "stat",
+        "title": "Notes say DUE NOW / PAST DUE",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT COUNT(*)::int AS value\nFROM water_sampling_schedule\nWHERE notes IS NOT NULL\n  AND (\n    UPPER(notes) LIKE '%DUE NOW%'\n    OR UPPER(notes) LIKE '%PAST DUE%'\n  )",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "options": {
+          "reduceOptions": {
+            "values": true,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "value",
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center"
+        }
+      },
+      {
+        "id": 3,
         "type": "table",
-        "title": "Imports by source",
+        "title": "TESTS TO ORDER OR SCHEDULE — next 120 days",
+        "description": "Each row is one lab test to plan for. “What to sample / order” tells you the analyte or panel to order. Sort is soonest due date first.",
         "datasource": {
           "type": "postgres",
           "uid": "__DATASOURCE_UID__"
         },
         "gridPos": {
-          "h": 7,
-          "w": 14,
+          "h": 16,
+          "w": 24,
           "x": 0,
-          "y": 0
+          "y": 5
         },
         "targets": [
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  source_file AS source,\n  COUNT(*)::bigint AS rows,\n  MAX(imported_at) AS last_import\nFROM water_sampling_schedule\nGROUP BY source_file\nORDER BY source_file",
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'Standby well'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'Active well'\n    ELSE 'Well (rename file to include active or standby)'\n  END AS \"Well\",\n  CASE\n    WHEN next_due_date IS NULL THEN 'No due date in file'\n    WHEN next_due_date < CURRENT_DATE THEN 'OVERDUE'\n    WHEN next_due_date <= (CURRENT_DATE + INTERVAL '14 days')::date THEN 'Due within 2 weeks'\n    WHEN next_due_date <= (CURRENT_DATE + INTERVAL '45 days')::date THEN 'Due within 45 days'\n    WHEN next_due_date <= (CURRENT_DATE + INTERVAL '120 days')::date THEN 'Due within 120 days'\n    ELSE 'OK'\n  END AS \"How soon\",\n  CASE\n    WHEN COALESCE(TRIM(analyte_name), '') = '' AND COALESCE(TRIM(group_name), '') = '' THEN '(see PS code — analyte missing in export)'\n    WHEN COALESCE(TRIM(group_name), '') = '' THEN TRIM(analyte_name)\n    WHEN COALESCE(TRIM(analyte_name), '') = '' THEN TRIM(group_name)\n    ELSE TRIM(group_name) || ' — ' || TRIM(analyte_name)\n  END AS \"What to sample / order\",\n  next_due_date AS \"Due date\",\n  last_sampled AS \"Last sampled\",\n  ps_code AS \"PS code\",\n  COALESCE(notes, '') AS \"Notes\",\n  source_file AS \"Source file\"\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date <= (CURRENT_DATE + INTERVAL '120 days')::date\nORDER BY next_due_date ASC, \"Well\", ps_code",
             "refId": "A"
           }
         ],
         "fieldConfig": {
-          "defaults": {},
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": { "type": "auto" },
+              "inspect": false,
+              "wrapText": true
+            }
+          },
           "overrides": []
         },
         "options": {
           "showHeader": true,
-          "cellHeight": "sm",
+          "cellHeight": "lg",
           "footer": {
             "show": false,
             "reducer": ["sum"],
@@ -52,105 +196,39 @@
       {
         "id": 2,
         "type": "table",
-        "title": "Lead / Copper schedule",
-        "description": "Rows imported via import-lead-copper-csv (group_name = LEAD_COPPER).",
+        "title": "Lead and copper — what to sample",
+        "description": "Lead/copper schedule from your two-column import. Order bottles for the analyte shown.",
         "datasource": {
           "type": "postgres",
           "uid": "__DATASOURCE_UID__"
         },
         "gridPos": {
-          "h": 7,
-          "w": 10,
-          "x": 14,
-          "y": 0
-        },
-        "targets": [
-          {
-            "format": "table",
-            "rawQuery": true,
-            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  notes,\n  ps_code,\n  source_file,\n  imported_at\nFROM water_sampling_schedule\nWHERE group_name = 'LEAD_COPPER'\nORDER BY well, analyte_name",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "options": {
-          "showHeader": true,
-          "cellHeight": "sm",
-          "footer": {
-            "show": false,
-            "reducer": ["sum"],
-            "countRows": false
-          }
-        }
-      },
-      {
-        "id": 3,
-        "type": "table",
-        "title": "Due within 120 days",
-        "datasource": {
-          "type": "postgres",
-          "uid": "__DATASOURCE_UID__"
-        },
-        "gridPos": {
-          "h": 12,
+          "h": 9,
           "w": 24,
           "x": 0,
-          "y": 7
+          "y": 21
         },
         "targets": [
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes\nFROM water_sampling_schedule\nWHERE next_due_date IS NOT NULL\n  AND next_due_date <= (CURRENT_DATE + INTERVAL '120 days')::date\nORDER BY well, next_due_date ASC, source_file, ps_code, analyte_name",
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'Standby well'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'Active well'\n    ELSE 'Well (rename file to include active or standby)'\n  END AS \"Well\",\n  TRIM(analyte_name) AS \"What to sample / order\",\n  next_due_date AS \"Due date\",\n  COALESCE(notes, '') AS \"Notes\",\n  ps_code AS \"PS code\",\n  source_file AS \"Source file\"\nFROM water_sampling_schedule\nWHERE group_name = 'LEAD_COPPER'\nORDER BY \"Well\", \"What to sample / order\"",
             "refId": "A"
           }
         ],
         "fieldConfig": {
-          "defaults": {},
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": { "type": "auto" },
+              "wrapText": true
+            }
+          },
           "overrides": []
         },
         "options": {
           "showHeader": true,
-          "cellHeight": "sm",
-          "footer": {
-            "show": false,
-            "reducer": ["sum"],
-            "countRows": false
-          }
-        }
-      },
-      {
-        "id": 4,
-        "type": "table",
-        "title": "Full schedule (all sources)",
-        "datasource": {
-          "type": "postgres",
-          "uid": "__DATASOURCE_UID__"
-        },
-        "gridPos": {
-          "h": 14,
-          "w": 24,
-          "x": 0,
-          "y": 19
-        },
-        "targets": [
-          {
-            "format": "table",
-            "rawQuery": true,
-            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  source_file,\n  ps_code,\n  group_name,\n  analyte_name,\n  next_due_date,\n  next_due_raw,\n  last_sampled,\n  notes,\n  imported_at\nFROM water_sampling_schedule\nORDER BY well, source_file, ps_code, group_name, analyte_name",
-            "refId": "A"
-          }
-        ],
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "options": {
-          "showHeader": true,
-          "cellHeight": "sm",
+          "cellHeight": "lg",
           "footer": {
             "show": false,
             "reducer": ["sum"],
@@ -161,33 +239,117 @@
       {
         "id": 5,
         "type": "table",
-        "title": "Flagged in Notes (Due now / Past due)",
-        "description": "Rows where Notes suggests immediate attention; validate against DWW.",
+        "title": "URGENT — notes say DUE NOW or PAST DUE",
+        "description": "These rows need a human check against DWW even if a date is missing.",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 30
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'Standby well'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'Active well'\n    ELSE 'Well (rename file to include active or standby)'\n  END AS \"Well\",\n  CASE\n    WHEN COALESCE(TRIM(analyte_name), '') = '' AND COALESCE(TRIM(group_name), '') = '' THEN '(see PS code)'\n    WHEN COALESCE(TRIM(group_name), '') = '' THEN TRIM(analyte_name)\n    WHEN COALESCE(TRIM(analyte_name), '') = '' THEN TRIM(group_name)\n    ELSE TRIM(group_name) || ' — ' || TRIM(analyte_name)\n  END AS \"What to sample / order\",\n  COALESCE(notes, '') AS \"Notes\",\n  next_due_date AS \"Due date\",\n  ps_code AS \"PS code\",\n  source_file AS \"Source file\"\nFROM water_sampling_schedule\nWHERE notes IS NOT NULL\n  AND (\n    UPPER(notes) LIKE '%DUE NOW%'\n    OR UPPER(notes) LIKE '%PAST DUE%'\n  )\nORDER BY \"Well\", ps_code",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": { "type": "auto" },
+              "wrapText": true
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "lg",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
+      },
+      {
+        "id": 1,
+        "type": "table",
+        "title": "Files loaded (import status)",
+        "description": "One line per CSV file name you imported. Re-import replaces that file’s rows.",
         "datasource": {
           "type": "postgres",
           "uid": "__DATASOURCE_UID__"
         },
         "gridPos": {
           "h": 8,
-          "w": 24,
+          "w": 12,
           "x": 0,
-          "y": 33
+          "y": 39
         },
         "targets": [
           {
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'standby'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'active'\n    ELSE 'unclassified'\n  END AS well,\n  source_file,\n  ps_code,\n  analyte_name,\n  notes,\n  next_due_date,\n  next_due_raw\nFROM water_sampling_schedule\nWHERE notes IS NOT NULL\n  AND (\n    UPPER(notes) LIKE '%DUE NOW%'\n    OR UPPER(notes) LIKE '%PAST DUE%'\n  )\nORDER BY well, source_file, ps_code, analyte_name",
+            "rawSql": "SELECT\n  source_file AS \"File name\",\n  COUNT(*)::bigint AS \"Rows\",\n  MAX(imported_at) AS \"Last import\"\nFROM water_sampling_schedule\nGROUP BY source_file\nORDER BY source_file",
             "refId": "A"
           }
         ],
         "fieldConfig": {
-          "defaults": {},
+          "defaults": {
+            "custom": { "wrapText": true }
+          },
           "overrides": []
         },
         "options": {
           "showHeader": true,
-          "cellHeight": "sm",
+          "cellHeight": "lg",
+          "footer": {
+            "show": false,
+            "reducer": ["sum"],
+            "countRows": false
+          }
+        }
+      },
+      {
+        "id": 4,
+        "type": "table",
+        "title": "Full list — all tests (reference)",
+        "description": "Complete schedule for lookup. Use the panels above for day-to-day work.",
+        "datasource": {
+          "type": "postgres",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "gridPos": {
+          "h": 14,
+          "w": 12,
+          "x": 12,
+          "y": 39
+        },
+        "targets": [
+          {
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT\n  CASE\n    WHEN LOWER(source_file) LIKE '%standby%' THEN 'Standby well'\n    WHEN LOWER(source_file) LIKE '%active%' THEN 'Active well'\n    ELSE 'Well (rename file)'\n  END AS \"Well\",\n  CASE\n    WHEN COALESCE(TRIM(analyte_name), '') = '' AND COALESCE(TRIM(group_name), '') = '' THEN '(unspecified)'\n    WHEN COALESCE(TRIM(group_name), '') = '' THEN TRIM(analyte_name)\n    WHEN COALESCE(TRIM(analyte_name), '') = '' THEN TRIM(group_name)\n    ELSE TRIM(group_name) || ' — ' || TRIM(analyte_name)\n  END AS \"What to sample / order\",\n  next_due_date AS \"Due date\",\n  last_sampled AS \"Last sampled\",\n  ps_code AS \"PS code\",\n  COALESCE(group_name, '') AS \"Group\",\n  source_file AS \"Source file\"\nFROM water_sampling_schedule\nORDER BY \"Well\", next_due_date NULLS LAST, ps_code",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": { "wrapText": true }
+          },
+          "overrides": []
+        },
+        "options": {
+          "showHeader": true,
+          "cellHeight": "lg",
           "footer": {
             "show": false,
             "reducer": ["sum"],
@@ -199,5 +361,5 @@
   },
   "folderUid": null,
   "overwrite": true,
-  "message": "Automated upsert from neon-loader (water compliance)"
+  "message": "Automated upsert from neon-loader (water compliance ops view)"
 }

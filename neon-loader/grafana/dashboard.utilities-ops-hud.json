@@ -1,0 +1,352 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "utilities-ops-overview",
+    "title": "Utilities — Live HUD",
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "1m",
+    "tags": [
+      "utilities",
+      "operations",
+      "hud",
+      "neon"
+    ],
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "graphTooltip": "shared-crosshair",
+    "liveNow": true,
+    "panels": [
+      {
+        "id": 8,
+        "type": "text",
+        "title": "",
+        "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+        "transparent": true,
+        "options": {
+          "mode": "html",
+          "content": "<div style=\"text-align:center; padding: 8px 0 4px; letter-spacing: 0.12em; font-weight: 600; background: linear-gradient(90deg, rgba(6,182,212,0.15), rgba(168,85,247,0.12), rgba(6,182,212,0.15)); border: 1px solid rgba(34,211,238,0.25); border-radius: 6px; box-shadow: 0 0 24px rgba(34,211,238,0.08) inset;\">\n  <span style=\"font-size: 1.1rem; color: #e0f2fe;\">DEEP SPRINGS</span><br/>\n  <span style=\"font-size: 0.78rem; color: #67e8f9; text-transform: uppercase;\">Utilities · Live</span><br/>\n  <span style=\"font-size: 0.65rem; color: #94a3b8;\">Solar · Grid · Hydro · Water · auto-refresh 1m</span>\n</div>\n"
+        }
+      },
+      {
+        "id": 1,
+        "type": "stat",
+        "title": "Solar now",
+        "description": "Instant solar output. Higher is better.",
+        "gridPos": { "h": 8, "w": 6, "x": 0, "y": 3 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 1,
+            "unit": "kwatt",
+            "mappings": [
+              { "type": "range", "options": { "from": null, "to": 5, "result": { "text": "IDLE" } } },
+              { "type": "range", "options": { "from": 5, "to": 60, "result": { "text": "RAMPING" } } },
+              { "type": "range", "options": { "from": 60, "to": null, "result": { "text": "PEAK" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "#4c1d95", "value": null },
+                { "color": "#a855f7", "value": 5 },
+                { "color": "#22d3ee", "value": 60 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT record_ts AS \"time\", metric_value AS value FROM public.utility_measurement_tall WHERE physical_group = 'solar_field' AND metric_key = 'power_instantaneous_A' AND unit = 'kW' AND $__timeFilter(record_ts) ORDER BY record_ts DESC LIMIT 1;"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "type": "stat",
+        "title": "Grid now",
+        "description": "Power drawn from the grid. Lower is better.",
+        "gridPos": { "h": 8, "w": 6, "x": 6, "y": 3 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 1,
+            "unit": "kwatt",
+            "mappings": [
+              { "type": "range", "options": { "from": null, "to": 5, "result": { "text": "LIGHT LOAD" } } },
+              { "type": "range", "options": { "from": 5, "to": 15, "result": { "text": "MODERATE" } } },
+              { "type": "range", "options": { "from": 15, "to": null, "result": { "text": "HEAVY" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "#22c55e", "value": null },
+                { "color": "#fbbf24", "value": 5 },
+                { "color": "#fb7185", "value": 15 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT record_ts AS \"time\", metric_value AS value FROM public.utility_measurement_tall WHERE physical_group = 'electrical_grid' AND metric_key = 'power_instantaneous' AND unit = 'kW' AND $__timeFilter(record_ts) ORDER BY record_ts DESC LIMIT 1;"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "type": "stat",
+        "title": "Hydro now",
+        "description": "Instant hydro generation. Higher is better.",
+        "gridPos": { "h": 8, "w": 6, "x": 12, "y": 3 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 1,
+            "unit": "kwatt",
+            "mappings": [
+              { "type": "range", "options": { "from": null, "to": 10, "result": { "text": "IDLE" } } },
+              { "type": "range", "options": { "from": 10, "to": 50, "result": { "text": "RUNNING" } } },
+              { "type": "range", "options": { "from": 50, "to": null, "result": { "text": "FULL" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "#4c1d95", "value": null },
+                { "color": "#c084fc", "value": 10 },
+                { "color": "#34d399", "value": 50 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT record_ts AS \"time\", metric_value AS value FROM public.utility_measurement_tall WHERE physical_group = 'hydro_plant' AND metric_key = 'power_instantaneous' AND unit = 'kW' AND $__timeFilter(record_ts) ORDER BY record_ts DESC LIMIT 1;"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "type": "stat",
+        "title": "Water in now",
+        "description": "Average inflow to hydro. Context vs normal range.",
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 3 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 0,
+            "unit": "flowgpm",
+            "mappings": [
+              { "type": "range", "options": { "from": null, "to": 100, "result": { "text": "LOW" } } },
+              { "type": "range", "options": { "from": 100, "to": 500, "result": { "text": "NORMAL" } } },
+              { "type": "range", "options": { "from": 500, "to": null, "result": { "text": "HIGH" } } }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "#4c0519", "value": null },
+                { "color": "#fb923c", "value": 100 },
+                { "color": "#38bdf8", "value": 500 }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+          "textMode": "value_and_name"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "table",
+            "rawQuery": true,
+            "rawSql": "SELECT record_ts AS \"time\", metric_value AS value FROM public.utility_measurement_tall WHERE physical_group = 'hydro_plant' AND metric_key = 'flow_avg_A' AND unit = 'Gpm' AND $__timeFilter(record_ts) ORDER BY record_ts DESC LIMIT 1;"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "type": "timeseries",
+        "title": "Solar — 24h",
+        "gridPos": { "h": 7, "w": 12, "x": 0, "y": 11 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 1,
+            "unit": "kwatt",
+            "color": { "mode": "fixed", "fixedColor": "#22d3ee" },
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "fillOpacity": 18,
+              "gradientMode": "opacity",
+              "spanNulls": true,
+              "showPoints": "never"
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+          "tooltip": { "mode": "single", "sort": "none" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value FROM public.utility_measurement_tall WHERE physical_group = 'solar_field' AND metric_key = 'power_instantaneous_A' AND unit = 'kW' AND $__timeFilter(record_ts) GROUP BY 1 ORDER BY 1;"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "type": "timeseries",
+        "title": "Grid vs hydro — 24h",
+        "gridPos": { "h": 7, "w": 12, "x": 12, "y": 11 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 1,
+            "unit": "kwatt",
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "gradientMode": "opacity",
+              "spanNulls": true,
+              "showPoints": "never"
+            }
+          },
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Grid" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#f472b6" } },
+                { "id": "custom.lineWidth", "value": 2 }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Hydro" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#a78bfa" } },
+                { "id": "custom.lineWidth", "value": 2 }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+          "tooltip": { "mode": "multi", "sort": "desc" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Grid' AS metric FROM public.utility_measurement_tall WHERE physical_group = 'electrical_grid' AND metric_key = 'power_instantaneous' AND unit = 'kW' AND $__timeFilter(record_ts) GROUP BY 1 UNION ALL SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Hydro' AS metric FROM public.utility_measurement_tall WHERE physical_group = 'hydro_plant' AND metric_key = 'power_instantaneous' AND unit = 'kW' AND $__timeFilter(record_ts) GROUP BY 1 ORDER BY 1;"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "type": "timeseries",
+        "title": "Hydro inflow — 24h",
+        "gridPos": { "h": 7, "w": 24, "x": 0, "y": 18 },
+        "transparent": true,
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 0,
+            "unit": "flowgpm",
+            "color": { "mode": "fixed", "fixedColor": "#38bdf8" },
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "gradientMode": "opacity",
+              "spanNulls": true,
+              "showPoints": "never"
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": { "displayMode": "list", "placement": "bottom", "showLegend": false },
+          "tooltip": { "mode": "single", "sort": "none" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value FROM public.utility_measurement_tall WHERE physical_group = 'hydro_plant' AND metric_key = 'flow_avg_A' AND unit = 'Gpm' AND $__timeFilter(record_ts) GROUP BY 1 ORDER BY 1;"
+          }
+        ]
+      }
+    ],
+    "templating": { "list": [] },
+    "annotations": { "list": [] }
+  },
+  "overwrite": true,
+  "message": "HUD styling: banner, short titles, neon palette, transparent panels"
+}

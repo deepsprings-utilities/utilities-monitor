@@ -1,0 +1,79 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "deep-springs-home",
+    "title": "Operations home",
+    "description": "Start here: utilities status, water reporting, and links to docs. Add runbooks and task lists when ready.",
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "",
+    "tags": ["home", "ops", "navigation", "deep-springs"],
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "type": "text",
+        "title": "",
+        "description": "",
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+        "transparent": true,
+        "options": {
+          "mode": "html",
+          "content": "<div style=\"text-align:center; padding: 14px 12px; letter-spacing: 0.08em; font-weight: 600; background: linear-gradient(90deg, rgba(6,182,212,0.12), rgba(168,85,247,0.10), rgba(6,182,212,0.12)); border: 1px solid rgba(34,211,238,0.22); border-radius: 8px;\">\n  <span style=\"font-size: 1.25rem; color: #e0f2fe;\">Deep Springs — Operations</span><br/>\n  <span style=\"font-size: 0.85rem; color: #94a3b8; font-weight: 400;\">Utilities · Water · Documentation · (runbooks & tasks — coming soon)</span>\n</div>\n"
+        }
+      },
+      {
+        "id": 2,
+        "type": "text",
+        "title": "Live utilities",
+        "gridPos": { "h": 10, "w": 12, "x": 0, "y": 4 },
+        "transparent": true,
+        "options": {
+          "mode": "markdown",
+          "content": "### At-a-glance status\n\n**[Utilities — Live HUD](/d/utilities-ops-overview)**  \nSolar, grid, hydro output, and hydro inflow — color-coded for quick reads.\n\n**[Hydro power (detailed)](/d/hydro-power-output)**  \nLonger-range hydro power series (single-focus chart).\n\n---\n*Tip: bookmark this home dashboard, then open the HUD for daily rounds.*\n"
+        }
+      },
+      {
+        "id": 3,
+        "type": "text",
+        "title": "Water & reporting",
+        "gridPos": { "h": 10, "w": 12, "x": 12, "y": 4 },
+        "transparent": true,
+        "options": {
+          "mode": "markdown",
+          "content": "### Compliance & schedules\n\n**[Water sampling — ops view](/d/water-compliance-schedule)**  \nLead/copper schedule, due dates, and import status — written for field and ops staff.\n\n---\n*After each CSV import, refresh that dashboard (or wait for its auto-refresh).*  \nImport scripts live in the repo under `water-compliance/scripts/`.\n"
+        }
+      },
+      {
+        "id": 4,
+        "type": "text",
+        "title": "Documentation",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+        "transparent": true,
+        "options": {
+          "mode": "markdown",
+          "content": "### Repo docs (replace with your wiki links when ready)\n\n| Topic | Where |\n|-------|--------|\n| R2 → Neon ingest | `neon-loader/README.md` |\n| Worker uploads | `worker/README.md` |\n| Water CSV imports | `water-compliance/README.md` |\n\n**Stack / meta-instruction** — *Add a link here later* (runbooks, credentials rotation, who to call).\n"
+        }
+      },
+      {
+        "id": 5,
+        "type": "text",
+        "title": "Jobs & tasks",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+        "transparent": true,
+        "options": {
+          "mode": "markdown",
+          "content": "### Miscellaneous (placeholder)\n\nUse this section later for:\n\n- **Maintenance checklist** — backups, token renewal, ingest health\n- **One-off tasks** — link to Linear/Jira/Notion or paste bullets\n- **On-call / escalation** — phone tree, after-hours\n\n---\n*Edit this dashboard in Grafana or update `neon-loader/grafana/dashboard.ops-home.json` in git.*\n"
+        }
+      }
+    ],
+    "templating": { "list": [] },
+    "annotations": { "list": [] }
+  },
+  "overwrite": true,
+  "message": "Add operations home: utilities + water + doc placeholders"
+}
