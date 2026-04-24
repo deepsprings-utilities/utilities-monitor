@@ -54,6 +54,10 @@ const PHASE_HINTS = new Map([
   [" a-b", "AB"],
   [" b-c", "BC"],
   [" a-c", "AC"],
+  /** Hyphenated A/B/C before spaced forms (e.g. flow-rate-c). */
+  ["-a", "A"],
+  ["-b", "B"],
+  ["-c", "C"],
   [" a", "A"],
   [" b", "B"],
   [" c", "C"],
@@ -63,18 +67,26 @@ const PHASE_HINTS = new Map([
   [" average", "avg"],
 ]);
 
-const SOURCE_SYSTEM_HINTS = {
-  "wyman creek": "hydro_plant",
-  "reservoir by-pass": "hydro_plant",
-  bypass: "hydro_plant",
-  "deep well pump": "deep_well",
-  "booster pump": "hydro_plant",
-  sce: "electrical_grid",
-  "net meter": "electrical_grid",
-  hydro: "hydro_plant",
-  solar: "solar_field",
-  modhopper: "modhopper_status",
-};
+/**
+ * First match wins. Put flow-rate a/c and site substrings that must override
+ * generic "hydro" or "bypass" before their broader keys.
+ */
+const SOURCE_SYSTEM_HINTS_ORDERED = [
+  ["flow rate c", "hydro_plant"],
+  ["flow-rate-c", "hydro_plant"],
+  ["flow rate a", "booster_pump"],
+  ["flow-rate-a", "booster_pump"],
+  ["wyman creek", "hydro_plant"],
+  ["reservoir by-pass", "hydro_plant"],
+  ["bypass", "hydro_plant"],
+  ["deep well pump", "deep_well"],
+  ["booster pump", "booster_pump"],
+  ["sce", "electrical_grid"],
+  ["net meter", "electrical_grid"],
+  ["hydro", "hydro_plant"],
+  ["solar", "solar_field"],
+  ["modhopper", "modhopper_status"],
+];
 
 // --- public API -------------------------------------------------------------
 
@@ -359,6 +371,52 @@ function parseLooseLine(line) {
 
 // --- column names → metric keys ---------------------------------------------
 
+function isGpmUnit(unit) {
+  return String(unit || "")
+    .toLowerCase()
+    .includes("gpm");
+}
+
+function mapFlowStreamSuffixLabel(source) {
+  for (const [regex, label] of METRIC_SUFFIX_RULES) {
+    if (regex.test(source)) {
+      if (AGG_LABELS.has(label)) return label;
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Hydro device mb-006: F2 Wyman = plant intake, F-1 = reservoir bypass. Distinct
+ * keys avoid the generic flow_avg_A collision and match ops meaning (Grafana HUD).
+ */
+function namedHydroFlowStreamMetricKey(source, unit) {
+  const s = String(source);
+  if (!s.includes("flow") && !isGpmUnit(unit)) return null;
+
+  if (s.includes("wyman") && s.includes("creek")) {
+    const label = mapFlowStreamSuffixLabel(s);
+    if (label) return `flow_wyman_${label}`;
+    if (isGpmUnit(unit)) return "flow_wyman";
+    return null;
+  }
+
+  const isF1Bypass =
+    s.includes("f-1") && (s.includes("by-pass") || s.includes("bypass"));
+  const isReservoirBypass =
+    s.includes("reservoir") &&
+    (s.includes("by-pass") || s.includes("bypass"));
+  if (isF1Bypass || isReservoirBypass) {
+    const label = mapFlowStreamSuffixLabel(s);
+    if (label) return `flow_bypass_${label}`;
+    if (isGpmUnit(unit)) return "flow_bypass";
+    return null;
+  }
+
+  return null;
+}
+
 function parseColumnSpec(columnName, context = {}) {
   if (!columnName) return null;
   const clean = String(columnName).trim();
@@ -378,6 +436,11 @@ function parseColumnSpec(columnName, context = {}) {
   }
 
   let source = normalizeSource(canonicalBase);
+  const stream = namedHydroFlowStreamMetricKey(source, unit);
+  if (stream) {
+    return { source: inferSystem(source), metric: stream, unit };
+  }
+
   let metric = detectMetric(source, unit);
   const phase = detectPhase(source);
   if (phase) metric = `${metric}_${phase}`;
@@ -445,7 +508,7 @@ function isMeasurableHeader(header) {
 }
 
 function inferSystem(source) {
-  for (const [key, value] of Object.entries(SOURCE_SYSTEM_HINTS)) {
+  for (const [key, value] of SOURCE_SYSTEM_HINTS_ORDERED) {
     if (source.includes(key)) return value;
   }
   return "unknown";

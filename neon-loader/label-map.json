@@ -1,4 +1,10 @@
 {
+  "flowMeters": {
+    "booster": "mb-003",
+    "hydroWymanIntake": "mb-006",
+    "deepWell": "mb-008",
+    "note": "Grafana Wyman GPM: metric_key flow_wyman_* (F2) on mb-006 only. Not booster (mb-003). Not F-1 bypass (flow_bypass_* on mb-006)."
+  },
   "labels": {
     "001": {
       "labelName": "E3 Site Total Power",
@@ -16,7 +22,7 @@
     "003": {
       "labelName": "F3 and P2 Booster Pump Flex IO",
       "deviceAddress": "mb-003",
-      "physicalGroup": "hydro_plant",
+      "physicalGroup": "booster_pump",
       "schemaId": "booster_flex_v1"
     },
     "004": {

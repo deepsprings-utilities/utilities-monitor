@@ -45,7 +45,7 @@ Durable scheduled ETL that:
 Each device entry should include:
 - `labelName`
 - `deviceAddress`
-- `physicalGroup` (for example `solar_field`, `hydro_plant`, `electrical_grid`, `modhopper_status`, `deep_well`)
+- `physicalGroup` (for example `solar_field`, `hydro_plant`, `booster_pump`, `electrical_grid`, `modhopper_status`, `deep_well`)
 - `schemaId` (schema version marker for future parser evolution)
 - Optional `hasData` flag. Set `false` for devices like ModHopper transceivers that do not produce utility measurements.
 
@@ -147,3 +147,33 @@ DELETE FROM ingest_checkpoint
 WHERE r2_key = 'log-gz/serial/2026/03/20/file.log.gz'
   AND etag = 'etag_here';
 ```
+
+### Replay GPM (flow) for the three flow devices only
+
+Use this after **parser / Wyman / bypass / booster** fixes so you re-load **only** GPM `utility_measurement_tall` rows and raw lines for **mb-003, mb-006, mb-008**—not the whole table. Other devices, and non-Gpm columns on the same files (e.g. PSI, kW), are left in place. Clears checkpoints for those R2 objects so a normal `npm run ingest` re-fetches and re-parses them.
+
+```bash
+cd neon-loader
+export NEON_DATABASE_URL='postgresql://...'
+# R2 + account env vars as for a normal ingest (if you add --ingest):
+export R2_BUCKET_NAME=...
+export CLOUDFLARE_R2_ACCESS_KEY_ID=...
+export CLOUDFLARE_R2_SECRET_ACCESS_KEY=...
+export CLOUDFLARE_ACCOUNT_ID=...
+export INGEST_BATCH_LIMIT=5000   # optional, so replay reaches those keys sooner
+
+# DB cleanup only, then you run ingest (or wait for the hourly workflow):
+npm run replay:flow
+npm run ingest
+
+# Or cleanup and run the loader in one go:
+npm run replay:flow:ingest
+```
+
+Set `REPLAY_FLOW_DEVICES=mb-003,mb-006,mb-008` (or `FLOW_METER_DEVICE_ADDRESSES=…`) to override the default list.
+
+**In-place fix (no delete):** if the error is only wrong `physical_group` / `source_system` (e.g. booster tagged as hydro on `mb-003`), you can `UPDATE` those rows. You cannot reliably split Wyman vs bypass or rename to `flow_wyman_avg` if two streams ever shared the same `metric_key` in `utility_measurement_tall` without re-parsing. See [`scripts/backfill-flow-tall-in-place.sql`](scripts/backfill-flow-tall-in-place.sql). A **Grafana** SQL layer can also apply `CASE` corrections for read-only display without changing stored rows.
+
+### Full wipe (rare)
+
+Truncates all AcquiSuite ingest tables and checkpoints. Use `npm run reset:ingest` and then `npm run ingest`, or `npm run reingest:from-scratch`. See `scripts/reset-ingest.mjs`. Does not touch `water_sampling_schedule`. Raise `INGEST_BATCH_LIMIT` if the R2 listing exceeds one batch; repeat runs or scheduled Actions will continue draining.

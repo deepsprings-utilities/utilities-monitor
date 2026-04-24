@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "ingest": "node src/run.js",
+    "replay:flow": "node scripts/replay-flow-meters.mjs --yes",
+    "replay:flow:ingest": "node scripts/replay-flow-meters.mjs --yes --ingest",
+    "reset:ingest": "node scripts/reset-ingest.mjs --yes",
+    "reingest:from-scratch": "node scripts/reset-ingest.mjs --yes --ingest",
     "migrate": "node src/migrate.js",
     "test": "node --test test/*.test.js",
     "grafana:push": "node scripts/push-grafana-dashboard.mjs",

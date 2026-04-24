@@ -28,7 +28,7 @@
         "transparent": true,
         "options": {
           "mode": "html",
-          "content": "<div style=\"text-align:center; padding: 8px 0 4px; letter-spacing: 0.12em; font-weight: 600; background: linear-gradient(90deg, rgba(6,182,212,0.15), rgba(168,85,247,0.12), rgba(6,182,212,0.15)); border: 1px solid rgba(34,211,238,0.25); border-radius: 6px; box-shadow: 0 0 24px rgba(34,211,238,0.08) inset;\">\n  <span style=\"font-size: 1.1rem; color: #e0f2fe;\">DEEP SPRINGS</span><br/>\n  <span style=\"font-size: 0.78rem; color: #67e8f9; text-transform: uppercase;\">Utilities · Live</span><br/>\n  <span style=\"font-size: 0.65rem; color: #94a3b8;\">Solar · Grid · Hydro · Water · auto-refresh 1m</span>\n</div>\n"
+          "content": "<div style=\"text-align:center; padding: 8px 0 4px; letter-spacing: 0.12em; font-weight: 600; background: linear-gradient(90deg, rgba(6,182,212,0.15), rgba(168,85,247,0.12), rgba(6,182,212,0.15)); border: 1px solid rgba(34,211,238,0.25); border-radius: 6px; box-shadow: 0 0 24px rgba(34,211,238,0.08) inset;\">\n  <span style=\"font-size: 1.1rem; color: #e0f2fe;\">DEEP SPRINGS</span><br/>\n  <span style=\"font-size: 0.78rem; color: #67e8f9; text-transform: uppercase;\">Utilities · Live</span><br/>\n  <span style=\"font-size: 0.65rem; color: #94a3b8;\">Solar · Grid · Hydro kW · Wyman intake (GPM) · auto-refresh 1m</span>\n</div>\n"
         }
       },
       {
@@ -172,8 +172,8 @@
       {
         "id": 4,
         "type": "stat",
-        "title": "Water in now",
-        "description": "Average inflow to hydro. Context vs normal range.",
+        "title": "Hydro intake (Wyman)",
+        "description": "F2 Wyman Creek intake (Gpm) on mb-006. Booster (mb-003) and F-1 reservoir bypass (mb-006, flow_bypass_*) are not shown.",
         "gridPos": { "h": 8, "w": 6, "x": 18, "y": 3 },
         "transparent": true,
         "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
@@ -211,7 +211,7 @@
             "editorMode": "code",
             "format": "table",
             "rawQuery": true,
-            "rawSql": "SELECT record_ts AS \"time\", metric_value AS value FROM public.utility_measurement_tall WHERE physical_group = 'hydro_plant' AND metric_key = 'flow_avg_A' AND unit = 'Gpm' AND $__timeFilter(record_ts) ORDER BY record_ts DESC LIMIT 1;"
+            "rawSql": "SELECT record_ts AS \"time\", metric_value AS value FROM public.utility_measurement_tall WHERE device_address = 'mb-006' AND physical_group = 'hydro_plant' AND unit = 'Gpm' AND metric_key LIKE 'flow_wyman%' AND $__timeFilter(record_ts) ORDER BY (metric_key = 'flow_wyman_avg') DESC, record_ts DESC LIMIT 1;"
           }
         ]
       },
@@ -308,7 +308,7 @@
       {
         "id": 7,
         "type": "timeseries",
-        "title": "Hydro inflow — 24h",
+        "title": "Hydro intake (Wyman) — 24h",
         "gridPos": { "h": 7, "w": 24, "x": 0, "y": 18 },
         "transparent": true,
         "datasource": { "type": "grafana-postgresql-datasource", "uid": "cfjwjxt0rt69sd" },
@@ -339,7 +339,7 @@
             "editorMode": "code",
             "format": "time_series",
             "rawQuery": true,
-            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value FROM public.utility_measurement_tall WHERE physical_group = 'hydro_plant' AND metric_key = 'flow_avg_A' AND unit = 'Gpm' AND $__timeFilter(record_ts) GROUP BY 1 ORDER BY 1;"
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value FROM public.utility_measurement_tall WHERE device_address = 'mb-006' AND physical_group = 'hydro_plant' AND unit = 'Gpm' AND metric_key = 'flow_wyman_avg' AND $__timeFilter(record_ts) GROUP BY 1 ORDER BY 1;"
           }
         ]
       }

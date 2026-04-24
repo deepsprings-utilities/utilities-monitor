@@ -107,8 +107,8 @@ export async function insertRawRecords(client, fileId, records, label) {
 
 /**
  * Tall-row physical_group: prefer parser column semantics (source_system from header text)
- * when known, so mixed schemas (e.g. solar + hydro columns on one mb-005 file) roll up
- * hydro power under hydro_plant instead of only the filename device tag.
+ * when known, so mixed schemas (e.g. solar + hydro on mb-005, or booster vs hydro
+ * on differently named columns) roll up correctly instead of only the filename device tag.
  */
 export function physicalGroupForTallRow(row, label) {
   const inferred = row.sourceSystem;
