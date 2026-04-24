@@ -1,4 +1,30 @@
-## neon-loader
+# neon-loader (R2 → Neon Postgres)
+
+**Role in the monorepo:** this folder is the **batch ingestion service** that turns objects already in **R2** (written by the [`worker/`](../worker/) Cloudflare Worker) into rows in **Neon**. It does **not** accept HTTP device uploads. Optional Grafana dashboard JSON and water-schedule table support share this package; water **CSV** importers for schedules live in [`../water-compliance/`](../water-compliance/).
+
+## What’s in the `neon-loader/` folder
+
+| Path | Purpose |
+|------|---------|
+| [`src/run.js`](src/run.js) | Entry: list R2, parse files, load DB, checkpoints. |
+| [`src/parse.js`](src/parse.js) | CSV (tab/comma) parsing, header detection, tall metrics. |
+| [`src/r2.js`](src/r2.js) | S3-compatible R2 listing and object reads. |
+| [`src/db.js`](src/db.js) | Postgres writes (raw + normalized). |
+| [`src/migrate.js`](src/migrate.js) | Runs SQL in `sql/` in order. |
+| [`src/checkpoint.js`](src/checkpoint.js) | Idempotent `(r2_key, etag)` tracking. |
+| [`src/labeling.js`](src/labeling.js) | Resolves `mb-…` in filenames via `label-map.json`. |
+| [`sql/`](sql/) | Ordered Postgres migrations (ingest tables, tall table, water schedule, etc.). |
+| [`test/`](test/) | Node test runner: parse, labeling, db helpers. |
+| [`grafana/`](grafana/) | Dashboard JSON; [`scripts/push-grafana-dashboard.mjs`](scripts/push-grafana-dashboard.mjs) pushes them via API. |
+| [`label-map.json`](label-map.json) | Device labels, `schemaId`, `hasData`, per-schema column rules. |
+| [`schema-column-orders.json`](schema-column-orders.json) | Column order for headerless / strict parsing (also source for Worker's `mb-csv-header-lines.json`). |
+| [`package.json`](package.json) | `ingest`, `migrate`, `test`, `grafana:*` scripts. |
+
+**Related (outside this folder):** scheduled ingest is [`.github/workflows/ingest-r2-to-neon.yml`](../.github/workflows/ingest-r2-to-neon.yml). Root map: [`README.md`](../README.md).
+
+---
+
+## What the ETL does
 
 Durable scheduled ETL that:
 - Reads new `log-gz/` objects from Cloudflare R2.
@@ -54,22 +80,30 @@ DRY_RUN=1 npm run ingest
 
 ## Grafana dashboard automation
 
-`neon-loader` includes a Grafana dashboard template at `grafana/dashboard.hydro-power.json` and an upsert script:
+Templates live under `neon-loader/grafana/`. The push script substitutes `__DATASOURCE_UID__` in JSON with `GRAFANA_DATASOURCE_UID` before calling Grafana’s dashboard API.
+
+| Script | Dashboard template |
+|--------|-------------------|
+| `npm run grafana:push` (default) | `grafana/dashboard.hydro-power.json` |
+| `npm run grafana:push:water` | `grafana/dashboard.water-compliance.json` (water sampling / ops schedule views over `water_sampling_schedule`) |
 
 ```bash
 npm run grafana:push
+# or
+npm run grafana:push:water
 ```
 
 Required environment variables:
 
-- `GRAFANA_URL` (for example `https://grafana.example.com`)
+- `GRAFANA_URL` (for example `https://your-org.grafana.net`)
 - `GRAFANA_TOKEN` (API token with dashboard write scope)
-- `GRAFANA_DATASOURCE_UID` (Grafana Postgres datasource UID)
+- `GRAFANA_DATASOURCE_UID` (Postgres datasource UID in Grafana; must match the DB that holds `utility_measurement_tall` / `water_sampling_schedule`)
 
 Dry-run validation (no API write):
 
 ```bash
 npm run grafana:dry-run
+npm run grafana:push:water -- --dry-run
 ```
 
 ## Database Objects

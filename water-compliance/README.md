@@ -1,5 +1,17 @@
 # Water sampling compliance (Grafana / Neon)
 
+**Role in the monorepo:** this folder holds **one-off and recurring CSV imports** for **water sampling schedules** (regulatory/ops), **not** AcquiSuite device logs. The **Postgres table and migration** for `water_sampling_schedule` live in **`neon-loader/sql/`** (`005_water_sampling_schedule.sql`); Grafana dashboard templates that query that table can live under **`neon-loader/grafana/`** (e.g. water compliance dashboard). The main log pipeline is [`worker/`](../worker/) → R2 → [`neon-loader/`](../neon-loader/)—see the root [`README.md`](../README.md).
+
+## What’s in the `water-compliance/` folder
+
+| Path | Purpose |
+|------|---------|
+| [`scripts/import-schedule-csv.mjs`](scripts/import-schedule-csv.mjs) | Imports “Last and Next Sample Report” style CSVs into `water_sampling_schedule`. |
+| [`scripts/import-lead-copper-csv.mjs`](scripts/import-lead-copper-csv.mjs) | Two-column Lead/Copper style CSV into the same table. |
+| [`package.json`](package.json) | `import-schedule`, `import-lead-copper` script aliases. |
+
+---
+
 Loads **LAST AND NEXT SAMPLE REPORT** exports into Postgres (`water_sampling_schedule`) so you can build Grafana tables and alerts instead of relying on the DWW JSP pages alone.
 
 ## Your files

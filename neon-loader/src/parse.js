@@ -1,9 +1,82 @@
 import { gunzipSync } from "node:zlib";
 
+/** Numeric cell: integer or decimal, optional leading minus. */
 const numberPattern = /^-?\d+(\.\d+)?$/;
+/** Allows scientific notation for loose matching only. */
 const numberPatternLoose = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
 const UNIT_RE = /\(([^()]*)\)\s*$/;
+
 const RESERVED = new Set(["time(UTC)", "error", "lowalarm", "highalarm"]);
+
+/** Lines before data to scan for a row containing `time(UTC)` (junk/comment prefix rows). */
+const HEADER_SCAN_MAX_LINES = 8;
+
+/** Common AcquiSuite / export typos → normalized token before metric detection. */
+const TYPO_CORRECTIONS = {
+  pwer: "power",
+  curent: "current",
+  voltge: "voltage",
+  frequncy: "frequency",
+  enrgy: "energy",
+  dmand: "demand",
+  aparant: "apparent",
+  reactve: "reactive",
+  postive: "positive",
+  negtive: "negative",
+  sumation: "sum",
+  avrage: "average",
+  instntaneous: "instantaneous",
+  facotr: "factor",
+  hydo: "hydro",
+};
+
+/** Suffix patterns on normalized source → stable metric tail (order matters). */
+const METRIC_SUFFIX_RULES = [
+  [/\bave\s*rate\b$/, "avg_rate"],
+  [/\bavg\s*rate\b$/, "avg_rate"],
+  [/\brate\b$/, "rate"],
+  [/\binstantaneous\b$/, "instantaneous"],
+  [/\bdemand\b$/, "demand"],
+  [/\bave\b$/, "avg"],
+  [/\bavg\b$/, "avg"],
+  [/\baverage\b$/, "avg"],
+  [/\bmin\b$/, "min"],
+  [/\bmax\b$/, "max"],
+  [/\btotal\b$/, "total"],
+  [/\bcount\b$/, "count"],
+  [/\blevel\b$/, "level"],
+  [/\bstatus\b$/, "status"],
+];
+
+const AGG_LABELS = new Set(["avg", "min", "max", "rate", "avg_rate", "instantaneous", "demand"]);
+
+const PHASE_HINTS = new Map([
+  [" a-b", "AB"],
+  [" b-c", "BC"],
+  [" a-c", "AC"],
+  [" a", "A"],
+  [" b", "B"],
+  [" c", "C"],
+  [" sum", "sum"],
+  [" total", "sum"],
+  [" ave", "avg"],
+  [" average", "avg"],
+]);
+
+const SOURCE_SYSTEM_HINTS = {
+  "wyman creek": "hydro_plant",
+  "reservoir by-pass": "hydro_plant",
+  bypass: "hydro_plant",
+  "deep well pump": "deep_well",
+  "booster pump": "hydro_plant",
+  sce: "electrical_grid",
+  "net meter": "electrical_grid",
+  hydro: "hydro_plant",
+  solar: "solar_field",
+  modhopper: "modhopper_status",
+};
+
+// --- public API -------------------------------------------------------------
 
 export function parseGzipLog(fileBytes, options = {}) {
   const text = stripBom(decodeFile(fileBytes));
@@ -24,12 +97,10 @@ export function parseGzipLog(fileBytes, options = {}) {
     });
   }
 
-  // Headerless exports (e.g. Worker path): no title row — use fixed column order from label-map schema.
   if (options.columnOrder?.length) {
     const headers = options.columnOrder.map(normalizeCsvHeader);
     const timeCol = findTimeColumnHeader(headers);
     if (timeCol) {
-      // Data lines have no "time(UTC)" text — do not use detectDelimiter() which requires a header match.
       const { splitRow } = detectDelimiterDataLine(lines[0]);
       return parseStructuredTable(lines, {
         firstLineIndex: 0,
@@ -45,6 +116,63 @@ export function parseGzipLog(fileBytes, options = {}) {
   return { ...loose, measurableHeaders: [] };
 }
 
+export function parseUtcTime(value) {
+  if (value === undefined || value === null) return null;
+  const s = stripCellQuotes(value);
+  if (!s) return null;
+
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  let m = s.match(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})(\.\d+)?$/,
+  );
+  if (m) {
+    const [, y, mo, d, h, mi, sec, frac] = m;
+    const ms = frac ? Number(frac) * 1000 : 0;
+    const t = Date.UTC(
+      Number(y),
+      Number(mo) - 1,
+      Number(d),
+      Number(h),
+      Number(mi),
+      Number(sec),
+      ms,
+    );
+    const out = new Date(t);
+    if (!Number.isNaN(out.getTime())) return out.toISOString();
+  }
+
+  m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/);
+  if (m) {
+    const d = new Date(`${m[1]}T${m[2]}${m[3] || ""}Z`);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  let d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString();
+
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/);
+  if (m) {
+    const [, mo, day, y, h, mi, sec] = m;
+    d = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(day), Number(h), Number(mi), Number(sec)));
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  if (/^\d{10,13}$/.test(s)) {
+    const n = Number(s);
+    const ms = s.length <= 10 ? n * 1000 : n;
+    d = new Date(ms);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+
+  return null;
+}
+
+// --- structured CSV / TSV (header row present or headerless + columnOrder) ---
+
 function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCol, options }) {
   const expectedHeaders = new Set(options.expectedHeaders || []);
   const headerAliases = options.headerAliases || {};
@@ -55,9 +183,7 @@ function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCo
     parseColumnSpec(h, { expectedHeaders, headerAliases, strictHeaders }),
   );
   headers.forEach((h, idx) => {
-    if (headerSpecs[idx] && isMeasurableHeader(h)) {
-      measurableHeaders.push(h);
-    }
+    if (headerSpecs[idx] && isMeasurableHeader(h)) measurableHeaders.push(h);
   });
 
   const rawRecords = [];
@@ -72,8 +198,6 @@ function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCo
     let cols = splitRow(rawText);
     if (cols.length === 0) continue;
 
-    // Some feeds mix delimiters (for example tab header row with comma data rows).
-    // If header-selected splitter yields a single cell, retry using data-line detection.
     if (cols.length <= 1 && headers.length > 1) {
       const altSplit = detectDelimiterDataLine(rawText).splitRow;
       const altCols = altSplit(rawText);
@@ -95,25 +219,15 @@ function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCo
       recordTs,
     });
 
-    for (let colIdx = 0; colIdx < headers.length; colIdx += 1) {
-      const header = headers[colIdx];
-      if (RESERVED.has(header)) continue;
-      const spec = headerSpecs[colIdx];
-      if (!spec) continue;
-      const value = coerceValue(cols[colIdx] ?? "");
-      if (typeof value !== "number" || !Number.isFinite(value)) continue;
-      tallRows.push({
-        recordTs,
-        metricKey: spec.metric,
-        metricValue: value,
-        unit: spec.unit,
-        quality: null,
-        sourceSystem: spec.source,
-        errorFlag,
-        lowAlarm,
-        highAlarm,
-      });
-    }
+    addStructuredTallRows(tallRows, {
+      headers,
+      headerSpecs,
+      cols,
+      recordTs,
+      errorFlag,
+      lowAlarm,
+      highAlarm,
+    });
   }
 
   return {
@@ -122,6 +236,29 @@ function parseStructuredTable(lines, { firstLineIndex, splitRow, headers, timeCo
     tallRows,
     measurableHeaders,
   };
+}
+
+function addStructuredTallRows(tallRows, ctx) {
+  const { headers, headerSpecs, cols, recordTs, errorFlag, lowAlarm, highAlarm } = ctx;
+  for (let colIdx = 0; colIdx < headers.length; colIdx += 1) {
+    const header = headers[colIdx];
+    if (RESERVED.has(header)) continue;
+    const spec = headerSpecs[colIdx];
+    if (!spec) continue;
+    const value = coerceValue(cols[colIdx] ?? "");
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    tallRows.push({
+      recordTs,
+      metricKey: spec.metric,
+      metricValue: value,
+      unit: spec.unit,
+      quality: null,
+      sourceSystem: spec.source,
+      errorFlag,
+      lowAlarm,
+      highAlarm,
+    });
+  }
 }
 
 function padOrTruncateCols(cols, len) {
@@ -144,15 +281,11 @@ function buildRowObject(headers, cols) {
   return row;
 }
 
-/**
- * Some exports have a junk/metadata line before the real header row.
- * Scan the first few lines for one that splits into a recognizable time(UTC) column.
- */
 function findHeaderRow(lines) {
-  const maxScan = Math.min(8, lines.length);
+  const maxScan = Math.min(HEADER_SCAN_MAX_LINES, lines.length);
   for (let offset = 0; offset < maxScan; offset += 1) {
     const line = lines[offset];
-    const { splitRow } = detectDelimiter(line);
+    const { splitRow } = detectDelimiterForHeaderLine(line);
     const headers = splitRow(line).map(normalizeCsvHeader);
     const timeCol = findTimeColumnHeader(headers);
     if (timeCol && headers.length >= 4) {
@@ -162,50 +295,51 @@ function findHeaderRow(lines) {
   return null;
 }
 
+// --- loose lines (key=value or comma-separated columns as col_N) ------------
+
 function parseLooseLines(lines) {
   const rawRecords = [];
   const tallRows = [];
   for (let idx = 0; idx < lines.length; idx += 1) {
     const lineNo = idx + 1;
     const rawText = lines[idx];
-    const parsed = parseLine(rawText);
+    const parsed = parseLooseLine(rawText);
     let recordTs = parsed.ts || parsed.timestamp || null;
     if (!recordTs && parsed.col_1 !== undefined && parsed.col_1 !== null) {
       const t = parseUtcTime(parsed.col_1);
       if (t) recordTs = t;
     }
     rawRecords.push({ lineNo, rawText, parsedJson: parsed, recordTs });
+
     for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "number" && Number.isFinite(value)) {
-        // Loose comma-split of TSV lines yields col_1..col_N — not real metric names; skip for tall table.
-        if (/^col_\d+$/i.test(key)) continue;
-        tallRows.push({
-          recordTs,
-          metricKey: key,
-          metricValue: value,
-          unit: null,
-          quality: null,
-          sourceSystem: "unknown",
-          errorFlag: false,
-          lowAlarm: false,
-          highAlarm: false,
-        });
-      }
+      if (typeof value !== "number" || !Number.isFinite(value)) continue;
+      if (/^col_\d+$/i.test(key)) continue;
+      tallRows.push({
+        recordTs,
+        metricKey: key,
+        metricValue: value,
+        unit: null,
+        quality: null,
+        sourceSystem: "unknown",
+        errorFlag: false,
+        lowAlarm: false,
+        highAlarm: false,
+      });
     }
   }
   return { lineCount: lines.length, rawRecords, tallRows };
 }
 
-function parseLine(line) {
-  const kvPairs = line
+function parseLooseLine(line) {
+  const kvPieces = line
     .split(/[,\s]+/)
     .map((piece) => piece.trim())
     .filter(Boolean)
     .filter((piece) => piece.includes("="));
 
-  if (kvPairs.length > 0) {
+  if (kvPieces.length > 0) {
     const out = {};
-    for (const pair of kvPairs) {
+    for (const pair of kvPieces) {
       const [k, ...rest] = pair.split("=");
       const key = (k || "").trim();
       const val = rest.join("=").trim();
@@ -222,6 +356,8 @@ function parseLine(line) {
   });
   return out;
 }
+
+// --- column names → metric keys ---------------------------------------------
 
 function parseColumnSpec(columnName, context = {}) {
   if (!columnName) return null;
@@ -257,51 +393,18 @@ function canonicalizeHeader(header, aliases) {
 }
 
 function normalizeSource(source) {
-  const corrections = {
-    pwer: "power",
-    curent: "current",
-    voltge: "voltage",
-    frequncy: "frequency",
-    enrgy: "energy",
-    dmand: "demand",
-    aparant: "apparent",
-    reactve: "reactive",
-    postive: "positive",
-    negtive: "negative",
-    sumation: "sum",
-    avrage: "average",
-    instntaneous: "instantaneous",
-    facotr: "factor",
-    hydo: "hydro",
-  };
   let s = String(source || "").toLowerCase().trim().replace(/\s+/g, " ");
-  for (const [wrong, right] of Object.entries(corrections)) {
+  for (const [wrong, right] of Object.entries(TYPO_CORRECTIONS)) {
     s = s.replaceAll(wrong, right);
   }
   return s;
 }
 
 function detectMetric(source, unit) {
-  const patterns = [
-    [/\bave\s*rate\b$/, "avg_rate"],
-    [/\bavg\s*rate\b$/, "avg_rate"],
-    [/\brate\b$/, "rate"],
-    [/\binstantaneous\b$/, "instantaneous"],
-    [/\bdemand\b$/, "demand"],
-    [/\bave\b$/, "avg"],
-    [/\bavg\b$/, "avg"],
-    [/\baverage\b$/, "avg"],
-    [/\bmin\b$/, "min"],
-    [/\bmax\b$/, "max"],
-    [/\btotal\b$/, "total"],
-    [/\bcount\b$/, "count"],
-    [/\blevel\b$/, "level"],
-    [/\bstatus\b$/, "status"],
-  ];
-  for (const [regex, label] of patterns) {
+  for (const [regex, label] of METRIC_SUFFIX_RULES) {
     if (regex.test(source)) {
       const quantity = inferQuantity(source, unit);
-      if (quantity && ["avg", "min", "max", "rate", "avg_rate", "instantaneous", "demand"].includes(label)) {
+      if (quantity && AGG_LABELS.has(label)) {
         return `${quantity}_${label}`;
       }
       return label;
@@ -324,19 +427,7 @@ function inferQuantity(source, unit) {
 }
 
 function detectPhase(source) {
-  const phaseMap = new Map([
-    [" a-b", "AB"],
-    [" b-c", "BC"],
-    [" a-c", "AC"],
-    [" a", "A"],
-    [" b", "B"],
-    [" c", "C"],
-    [" sum", "sum"],
-    [" total", "sum"],
-    [" ave", "avg"],
-    [" average", "avg"],
-  ]);
-  for (const [key, value] of phaseMap.entries()) {
+  for (const [key, value] of PHASE_HINTS.entries()) {
     if (source.includes(key)) return value;
   }
   return null;
@@ -354,22 +445,49 @@ function isMeasurableHeader(header) {
 }
 
 function inferSystem(source) {
-  const mapping = {
-    "wyman creek": "hydro_plant",
-    "reservoir by-pass": "hydro_plant",
-    bypass: "hydro_plant",
-    "deep well pump": "deep_well",
-    "booster pump": "hydro_plant",
-    sce: "electrical_grid",
-    "net meter": "electrical_grid",
-    hydro: "hydro_plant",
-    solar: "solar_field",
-    modhopper: "modhopper_status",
-  };
-  for (const [key, value] of Object.entries(mapping)) {
+  for (const [key, value] of Object.entries(SOURCE_SYSTEM_HINTS)) {
     if (source.includes(key)) return value;
   }
   return "unknown";
+}
+
+// --- delimiters: tab vs CSV vs semicolon ------------------------------------
+
+/**
+ * Header row: try split strategies until one yields a recognizable time column.
+ */
+function detectDelimiterForHeaderLine(firstLine) {
+  const strategies = buildHeaderSplitStrategies(firstLine);
+  for (const splitRow of strategies) {
+    const headers = splitRow(firstLine).map(normalizeCsvHeader);
+    if (findTimeColumnHeader(headers)) return { splitRow };
+  }
+  return { splitRow: splitCsvLine };
+}
+
+/**
+ * Data row without header text: choose splitter from characters present on the line.
+ */
+function detectDelimiterDataLine(line) {
+  if (line.includes("\t")) return { splitRow: splitTab };
+  if (line.includes(";") && !line.includes(",")) return { splitRow: splitSemicolon };
+  return { splitRow: splitCsvLine };
+}
+
+function buildHeaderSplitStrategies(firstLine) {
+  const strategies = [];
+  if (firstLine.includes("\t")) strategies.push(splitTab);
+  strategies.push(splitCsvLine);
+  if (firstLine.includes(";") && !firstLine.includes(",")) strategies.push(splitSemicolon);
+  return strategies;
+}
+
+function splitTab(line) {
+  return line.split("\t").map((c) => c.trim());
+}
+
+function splitSemicolon(line) {
+  return line.split(";").map((c) => c.trim());
 }
 
 function splitCsvLine(line) {
@@ -403,71 +521,6 @@ function parseBooleanFlag(value) {
   return Number.isFinite(n) && n !== 0;
 }
 
-/**
- * AcquiSuite CSVs often use `time(UTC)` like `2026-02-23 14:30:00` (space, no Z).
- * Without a T/Z, `new Date()` can be invalid or local-dependent; normalize to UTC ISO.
- */
-export function parseUtcTime(value) {
-  if (value === undefined || value === null) return null;
-  const s = stripCellQuotes(value);
-  if (!s) return null;
-
-  // ISO / RFC3339 with explicit Z or offset (trust Date parser)
-  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s)) {
-    const d = new Date(s);
-    if (!Number.isNaN(d.getTime())) return d.toISOString();
-  }
-
-  // YYYY-M-D H:M:S[.fff] — AcquiSuite often omits leading zeros on hour/month/day.
-  // Treat as UTC because the column is named time(UTC).
-  let m = s.match(
-    /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})(\.\d+)?$/,
-  );
-  if (m) {
-    const [, y, mo, d, h, mi, sec, frac] = m;
-    const ms = frac ? Number(frac) * 1000 : 0;
-    const t = Date.UTC(
-      Number(y),
-      Number(mo) - 1,
-      Number(d),
-      Number(h),
-      Number(mi),
-      Number(sec),
-      ms,
-    );
-    const out = new Date(t);
-    if (!Number.isNaN(out.getTime())) return out.toISOString();
-  }
-
-  // YYYY-MM-DD HH:MM:SS[.fff] (padded) without TZ → UTC
-  m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(\.\d+)?$/);
-  if (m) {
-    const d = new Date(`${m[1]}T${m[2]}${m[3] || ""}Z`);
-    if (!Number.isNaN(d.getTime())) return d.toISOString();
-  }
-
-  let d = new Date(s);
-  if (!Number.isNaN(d.getTime())) return d.toISOString();
-
-  // MM/DD/YYYY HH:MM:SS
-  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/);
-  if (m) {
-    const [, mo, day, y, h, mi, sec] = m;
-    d = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(day), Number(h), Number(mi), Number(sec)));
-    if (!Number.isNaN(d.getTime())) return d.toISOString();
-  }
-
-  // Unix epoch seconds or ms (pure digits)
-  if (/^\d{10,13}$/.test(s)) {
-    const n = Number(s);
-    const ms = s.length <= 10 ? n * 1000 : n;
-    d = new Date(ms);
-    if (!Number.isNaN(d.getTime())) return d.toISOString();
-  }
-
-  return null;
-}
-
 function decodeFile(fileBytes) {
   try {
     return gunzipSync(Buffer.from(fileBytes)).toString("utf8");
@@ -496,41 +549,6 @@ function findTimeColumnHeader(headers) {
   return null;
 }
 
-/**
- * Prefer tab for AcquiSuite exports that are TSV; comma is typical .log.csv.
- * Only try tab/semicolon when those characters appear (otherwise tab-split breaks comma-only lines).
- */
-function detectDelimiter(firstLine) {
-  const strategies = [];
-  if (firstLine.includes("\t")) {
-    strategies.push({ splitRow: (line) => line.split("\t").map((c) => c.trim()) });
-  }
-  strategies.push({ splitRow: (line) => splitCsvLine(line) });
-  if (firstLine.includes(";") && !firstLine.includes(",")) {
-    strategies.push({ splitRow: (line) => line.split(";").map((c) => c.trim()) });
-  }
-  for (const { splitRow } of strategies) {
-    const headers = splitRow(firstLine).map(normalizeCsvHeader);
-    if (findTimeColumnHeader(headers)) {
-      return { splitRow };
-    }
-  }
-  return { splitRow: (line) => splitCsvLine(line) };
-}
-
-/**
- * Headerless rows are all data cells — pick tab vs comma vs semicolon without matching `time(UTC)` in a cell.
- */
-function detectDelimiterDataLine(line) {
-  if (line.includes("\t")) {
-    return { splitRow: (l) => l.split("\t").map((c) => c.trim()) };
-  }
-  if (line.includes(";") && !line.includes(",")) {
-    return { splitRow: (l) => l.split(";").map((c) => c.trim()) };
-  }
-  return { splitRow: (l) => splitCsvLine(l) };
-}
-
 function stripCellQuotes(value) {
   let t = String(value ?? "").trim();
   if (t.length >= 2 && ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"')))) {
@@ -544,7 +562,6 @@ function coerceValue(value) {
   const s = stripCellQuotes(value);
   if (s === "") return "";
   if (numberPattern.test(s)) return Number(s);
-  // Do not use parseFloat() on arbitrary strings — e.g. parseFloat("2026-03-20T...") === 2026.
   if (numberPatternLoose.test(s)) return Number(s);
   return s;
 }

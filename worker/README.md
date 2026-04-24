@@ -1,139 +1,56 @@
-# AcquiSuite ingest Worker
+# AcquiSuite ingest (Cloudflare Worker)
 
-Cloudflare Worker (see `src/index.js`) that accepts uploads from an AcquiSuite device and stores the compressed log file in an R2 bucket.
+**Role in the monorepo:** this folder is the **only** Cloudflare Worker package. It is the **edge upload endpoint** for AcquiSuite; everything downstream (R2 listing, Neon load, Grafana) lives in other folders—see the root [`README.md`](../README.md).
 
-Run **`npm install` / `wrangler deploy` from this `worker/` directory** (or set CI `working-directory` to `worker`).
+This is the small **receiving** service that sits between your **AcquiSuite device** and **cloud storage**. When the device is set up for **HTTP/HTTPS upload**, it sends compressed log files here; the service checks that the request is allowed, then **saves the file** in a private bucket (Cloudflare R2) so the rest of your pipeline can use it.
 
-### “Workers Builds: acquisuite-ingest” (dashboard / email)
+You do not need to understand the cloud parts to understand what it does: **the device delivers logs; this service stores them and answers “ok”** so the device does not keep retrying.
 
-That text is the **title** for Cloudflare’s **Workers Builds** product — the **Git-connected** deploy path in the dashboard — not the full error message.
+## What it does, step by step
 
-This repo already deploys via **GitHub Actions** (`.github/workflows/deploy-worker.yml`). If you **also** connected the same GitHub repo under **Worker → Settings → Build**, **every push can run two deploys**; the Cloudflare one often **fails in monorepos** because Builds defaults to the **repository root**, where there is **no** `wrangler.jsonc` (it lives under `worker/`).
+1. **Accepts uploads** from the device over normal web (HTTPS) when someone configures AcquiSuite to push logs to your URL.
+2. **Verifies a shared secret** (an API key you configure). If the key is wrong or missing, the upload is rejected; if it is right, the service continues.
+3. **Finds the log file** in the upload. AcquiSuite sends a form with a file field called **LOGFILE** (usually a `.log.gz` file). The service may also read simple text fields the device can send, such as a **serial number** and **timestamp**, to organize storage.
+4. **Stores a copy in cloud storage** under a path that includes the date and, when available, the device’s serial number—so you can find files later without digging through one giant folder.
+5. **Responds with success** in a way AcquiSuite expects, so the device treats the run as complete.
 
-**Pick one:**
+**Health checks:** Simple browser or monitoring requests that are not “upload this file” get a short **“SUCCESS - OK”** response so status checks do not look like errors.
 
-| Approach | What to do |
-|----------|------------|
-| **GitHub Actions only** (recommended here) | In Cloudflare: **Workers & Pages → acquisuite-ingest → Settings → Build** — **disconnect** the Git repo or disable automatic Workers Builds so only Actions deploys. |
-| **Workers Builds only** | Same **Settings → Build**: set **Root directory** to `worker`, **Deploy command** to `npx wrangler deploy` (and **Build command** to `npm ci` if needed). You can then turn off the GitHub deploy workflow if you want a single pipeline. |
+## Why some uploads look like “data only” and others include a full spreadsheet header
 
-For the real failure reason, open **Deployments → View build history** (or the failed run) and read the **log lines below** that title — not the duplicated “Workers Builds: …” heading.
+AcquiSuite can send logs in **different ways** (for example, saving to a file share versus pushing over the web). Over **HTTP**, the file is often a **compressed block of data rows** without the top row that names each column. Over **other paths**, you might see a full CSV with a header line first. **This service does not remove headers** from what the device sent; it stores the payload as received.
 
-### How the Worker behaves
+**Optional behavior (on by default):** For HTTP uploads, the service can **add a single standard title row** at the top of the decompressed data when the file does not already contain that exact row, so downstream tools (and databases) that expect a **named header line** still work. It chooses which “column names” line to use based on hints in the **filename** (for example, an `mb-004`-style code) or a default you set in the Worker’s configuration if the filename has no such hint. If a matching header is already there, it **does not duplicate** it.
 
-- **Methods**
-  - `POST` / `PUT`: treated as uploads.
-  - Any other method (GET, HEAD, etc.): immediately returns a simple **200 "SUCCESS - OK"** so status checks don’t fail.
-- **Authentication**
-  - Accepts an API key from any of:
-    - Query string `?key=...` or `?password=...`
-    - Header `x-api-key: ...`
-    - Basic auth password in `Authorization: Basic ...`
-  - Compares against the `API_KEY` secret; if it doesn’t match, returns **403 FORBIDDEN**.
-- **Multipart parsing**
-  - If `Content-Type` is not `multipart/form-data`, the Worker just returns **SUCCESS - OK** (so odd test posts don’t error).
-  - For multipart uploads, it:
-    - Extracts file part named **`LOGFILE`** (expected `.log.gz`).
-    - Extracts text fields `SERIALNUMBER`, `FILETIME`, `LOOPNAME` when present.
-- **R2 storage**
-  - Requires an R2 binding named **`BUCKET`**.
-  - Stores the file as:
-    - `log-gz/<SERIALNUMBER>/<YYYY>/<MM>/<DD>/<filename>`
-  - Adds R2 metadata: `serial`, `filetime`, `loopname`, `source=acquisuite`.
-  - Always ends with a **200 "SUCCESS - OK"** response so the device is happy.
+**Checking what happened:** In your bucket, each stored object can carry **metadata** flags such as whether a header was **matched** (already present) or **added**, and which device profile (`mb-…`) was used. That helps you confirm the behavior without opening every file.
 
-### Why FTP CSVs have headers but HTTP uploads sometimes don’t
+## What you configure on the device (overview)
 
-AcquiSuite uses **different export profiles** for “push to FTP/file server” vs “HTTP/HTTPS remote upload”. The **HTTP path often sends gzip-compressed body rows only** (no `time(UTC)` header line), while FTP exports often include the full CSV with a header row. The Worker **does not strip** headers— it stores what the device sends.
+- **URL** — The HTTPS address your team gives you (often under your own domain) that points at this service.
+- **How to send the key** — Either as part of the URL, or as a header, or as a password in basic auth, depending on what your team documented—**it must match the API key** stored for the Worker.
+- **Same upload shape AcquiSuite already uses for HTTP** — A multipart form with the log as **LOGFILE**; optional fields like **SERIALNUMBER**, **FILETIME**, and **LOOPNAME** when your deployment uses them for naming or tracking.
 
-### CSV header prepending (optional, on by default)
+If something fails (wrong key, wrong URL, or the device is not actually sending the log file in the form), the device may show an error or retry; your team can use Worker and bucket logs in Cloudflare to narrow it down.
 
-Canonical header lines per MB device are in **`src/mb-csv-header-lines.json`** (regenerated via `scripts/build-mb-csv-headers.mjs`).
+## What’s in the `worker/` folder
 
-When `PREPEND_CSV_HEADERS` is enabled (default):
+| Path | Purpose |
+|------|---------|
+| [`src/index.js`](src/index.js) | Worker: multipart upload handler, R2 `put`, optional gzip + CSV header prepend. |
+| [`src/mb-csv-header-lines.json`](src/mb-csv-header-lines.json) | Canonical first CSV line per ModBus-style device code—**do not hand-edit**; regenerate from `neon-loader` column orders (below). |
+| [`scripts/build-mb-csv-headers.mjs`](scripts/build-mb-csv-headers.mjs) | Rebuilds `mb-csv-header-lines.json` from `../neon-loader/schema-column-orders.json` (`npm run build:worker-headers`). |
+| [`test/`](test/) | Vitest: header matching, gzip, smoke `GET`. |
+| [`wrangler.jsonc`](wrangler.jsonc) | Wrangler config (name, R2 **BUCKET** binding, vars). |
+| [`package.json`](package.json) | `dev` / `deploy` / `test` / `build:worker-headers`. |
 
-1. The Worker picks the canonical row from **`mb-csv-header-lines.json`** using:
-   - **`mb-001` … `mb-999` in the LOGFILE filename** (also `mb-1` → `001`), **or**
-   - Worker variable **`DEFAULT_CSV_HEADER_MB`** (e.g. `004`) when filenames from AcquiSuite **do not** include `mb-…` — set this in **Wrangler `vars`** or Cloudflare **Worker → Settings → Variables** so HTTP uploads still get a header row.
-2. After gunzip, the Worker **scans the first ~12 lines** for a row that **exactly matches** that canonical header (normalized: tab-separated, trimmed cells). If a match is found (including after a junk line before the real header), **nothing is prepended**; metadata includes `csv_header_matched=true` and `csv_header_mb=<code>`.
-3. If **no** matching header row is found, the Worker **prepends** the canonical line from the JSON. Metadata includes `csv_header_prepended=true` and `csv_header_mb=<code>`.
+**Related (outside this folder):** GitHub deploy workflow is [`.github/workflows/deploy-worker.yml`](../.github/workflows/deploy-worker.yml) with `working-directory: worker`.
 
-- **No header row inside the `.log.gz` in R2?** Check R2 metadata on the object: if there is **no** `csv_header_prepended` / `csv_header_matched`, the Worker did not know which MB row to use (add **`DEFAULT_CSV_HEADER_MB`**) or prepending is off (`PREPEND_CSV_HEADERS`), or the file is not gzip.
-- **Disable** prepending in Cloudflare: Worker → Settings → Variables → `PREPEND_CSV_HEADERS` = `0` or `false`.
-- **Regenerate** header strings after changing column lists:
+## For developers and operators
 
-```bash
-node scripts/build-mb-csv-headers.mjs
-```
+- **Code and behavior details:** `src/index.js` (Worker); canonical header list: `src/mb-csv-header-lines.json` (regenerated with `node scripts/build-mb-csv-headers.mjs` when column layouts change, then redeploy).
+- **Tests (header matching, gzip):** from this directory, `npm test`.
+- **Deploying this package:** `npm install` and Wrangler from the **`worker/`** directory; this repository also has CI that deploys on push. Broader monorepo notes (secrets, R2 binding name `BUCKET`): see the root [`README.md`](../README.md) and [`AGENTS.md`](../AGENTS.md).
 
-Then redeploy the Worker.
+### If you see two deploys or “Workers Builds: acquisuite-ingest” in email
 
-## Testing header matching and CSV prepending
-
-**Automated (Vitest):** from `worker/`:
-
-```bash
-npm test
-```
-
-This runs `test/csv-header.spec.js` (normalized header equality, junk line before header, gzip + `maybePrependCsvHeader` matched vs prepended) and a small smoke test on `GET`.
-
-**Manual (live Worker):** from `worker/`:
-
-```bash
-wrangler dev
-```
-
-Then send a multipart POST with a `LOGFILE` part (gzip body). Check R2 object metadata: `csv_header_matched` vs `csv_header_prepended`, or gunzip the object and confirm the first data line is the canonical header from `mb-csv-header-lines.json` when prepending ran.
-
-## Deploy locally (Wrangler)
-
-```bash
-npm install
-wrangler login
-wrangler deploy
-```
-
-## Deploy on every push to `main` (GitHub Actions)
-
-This repo includes a workflow at `.github/workflows/deploy-worker.yml`.
-
-Under **Settings → Secrets and variables → Actions**:
-
-**GitHub Actions secrets (case-sensitive):**
-
-- **`CLOUDFLARE_API_TOKEN`** (**Secret**): API token with **Workers:Edit** (and R2 if needed).
-- **`CLOUDFLARE_ACCOUNT_ID`** (**Secret or Variable**): 32-character hex **Account ID** (Workers overview sidebar — not Zone ID).
-
-**Common issues**
-
-- **Secrets vs Variables:** Account ID can be a **Variable** with the same name; the workflow merges secret first, then variable.
-- **Environment-scoped secrets:** If a secret is only on a GitHub **Environment**, add `environment: <name>` to `jobs.deploy`, or use repository-level secrets.
-- **Fallback:** Uncomment `"account_id"` in `wrangler.jsonc` if CI cannot provide `CLOUDFLARE_ACCOUNT_ID` (safe to commit).
-
-## Required Worker config
-
-- **Secret**: set `API_KEY` (Worker secret)
-  - Locally: `wrangler secret put API_KEY`
-  - Or in Cloudflare dashboard: Worker → Settings → Variables
-- **R2 binding**: bind your R2 bucket to `BUCKET`
-  - In Cloudflare dashboard: Worker → Settings → Bindings → R2 bucket → `BUCKET`
-
-## Connect to a domain / route
-
-In Cloudflare dashboard: Worker → Triggers → **Routes** → add a route for your zone (example: `example.com/acquisuite/*`).
-
-## Pointing AcquiSuite at the Worker
-
-Once the Worker is deployed and routed:
-
-- Use a URL like: `https://example.com/acquisuite/upload` (whatever route you configured).
-- Configure AcquiSuite to:
-  - Use **HTTP/HTTPS** uploads to that URL.
-  - Send either:
-    - `?key=YOUR_API_KEY` on the URL, or
-    - Header `x-api-key: YOUR_API_KEY`, or
-    - A Basic auth password matching `API_KEY`.
-  - Send the log as `multipart/form-data` with:
-    - File field `LOGFILE` (the `.log.gz` file).
-    - Optional text fields: `SERIALNUMBER`, `FILETIME`, `LOOPNAME`.
+The duplicate **“Workers Builds: acquisuite-ingest”** line is a Cloudflare **product label**, not the full error text. This repo is usually set up to deploy from **GitHub**; if the same Worker is also connected to **Git in the Cloudflare dashboard**, every push can trigger **two** builds. Use **one** path: turn off the Git-based Workers build for this worker, *or* point that build at the **`worker/`** root (and avoid running two CD systems at once). See [`AGENTS.md`](../AGENTS.md) for the monorepo layout.

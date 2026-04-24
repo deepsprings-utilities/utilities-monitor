@@ -7,16 +7,19 @@ Concise orientation for AI assistants working in this repository. Prefer linking
 | Path | Role |
 |------|------|
 | [`worker/`](worker/) | Cloudflare Worker: AcquiSuite HTTP uploads → R2 (gzip logs; optional CSV header handling). Entry: `worker/src/index.js`, config: `worker/wrangler.jsonc`. |
-| [`neon-loader/`](neon-loader/) | Node ETL: list/read R2, expand logs, map filename/device hints to schema, load **Neon Postgres**. |
+| [`neon-loader/`](neon-loader/) | Node ETL: list/read R2, expand logs, map filename/device hints to schema, load **Neon Postgres**; `sql/`, `grafana/`, `label-map.json`. |
+| [`water-compliance/`](water-compliance/) | CSV importers for `water_sampling_schedule` (Grafana/ops). Migration for that table: `neon-loader/sql/005_water_sampling_schedule.sql`. |
+| [`water-rights-report/`](water-rights-report/) | Template A1 Excel from Neon flow data; optional Drive/Dropbox upload. |
 | [`.github/workflows/deploy-worker.yml`](.github/workflows/deploy-worker.yml) | Deploy Worker on push (uses `working-directory: worker`). |
 | [`.github/workflows/ingest-r2-to-neon.yml`](.github/workflows/ingest-r2-to-neon.yml) | Scheduled + manual ingest: R2 → `neon-loader` → Neon. |
+| [`.github/workflows/water-rights-a1-report.yml`](.github/workflows/water-rights-a1-report.yml) | Monthly + manual A1 report (`water-rights-report/`). |
 
-Human-oriented detail: root [`README.md`](README.md), [`worker/README.md`](worker/README.md), [`neon-loader/README.md`](neon-loader/README.md).
+Human-oriented detail: root [`README.md`](README.md), [`worker/README.md`](worker/README.md), [`neon-loader/README.md`](neon-loader/README.md), [`water-compliance/README.md`](water-compliance/README.md), [`water-rights-report/README.md`](water-rights-report/README.md).
 
 ## Worker deploy
 
 - Run Wrangler and `npm install` / `npm ci` **from `worker/`** (or mirror that in CI with `working-directory: worker`).
-- **Do not** run two uncoordinated deploy pipelines: either **GitHub Actions** (this repo’s workflow) **or** Cloudflare **Workers Builds** with **root directory** set to `worker`, not both without intent. Monorepo default (repo root) breaks Builds because `wrangler.jsonc` lives under `worker/`. Full table: [`worker/README.md`](worker/README.md) (“Workers Builds” section).
+- **Do not** run two uncoordinated deploy pipelines: either **GitHub Actions** (this repo’s workflow) **or** Cloudflare **Workers Builds** with **root directory** set to `worker`, not both without intent. Monorepo default (repo root) breaks Builds because `wrangler.jsonc` lives under `worker/`. Short note: [`worker/README.md`](worker/README.md) (developers / dual deploy).
 - Secrets / env: **`CLOUDFLARE_API_TOKEN`**, **`CLOUDFLARE_ACCOUNT_ID`**, **`CLOUDFLARE_R2_*`** — see deploy workflow and Worker / neon-loader READMEs.
 
 ## Data pipeline (R2 → Neon)

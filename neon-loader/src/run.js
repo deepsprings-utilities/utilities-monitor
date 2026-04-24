@@ -8,14 +8,18 @@ import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js"
 import { loadLabelMap, resolveLabel } from "./labeling.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-let schemaColumnOrders = {};
-try {
-  schemaColumnOrders = JSON.parse(
-    readFileSync(path.join(__dirname, "..", "schema-column-orders.json"), "utf8"),
-  );
-} catch {
-  schemaColumnOrders = {};
+
+function loadSchemaColumnOrders() {
+  try {
+    return JSON.parse(
+      readFileSync(path.join(__dirname, "..", "schema-column-orders.json"), "utf8"),
+    );
+  } catch {
+    return {};
+  }
 }
+
+const schemaColumnOrders = loadSchemaColumnOrders();
 
 async function main() {
   const runId = `${Date.now()}`;

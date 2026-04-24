@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 /**
- * Uploads a file to a shared Google Drive folder using a service account.
+ * Uploads a file to a Google Drive folder using a service account.
+ *
+ * Important: Service accounts have **no personal “My Drive” storage quota**.
+ * The destination folder must live on a **Google Workspace Shared drive** (Team Drive),
+ * and the service account must be added to that shared drive (at least Contributor) or
+ * have access to a folder created inside it. Uploads to a folder in someone’s personal
+ * My Drive fail with 403 storageQuotaExceeded even if the folder is “shared”.
  *
  * Prereqs:
- *   - Create a Google Cloud service account, enable Google Drive API.
- *   - Share the destination Drive folder with the service account email (Editor).
+ *   - Enable Google Drive API for the GCP project.
+ *   - Target folder ID must be under a Shared drive; add the SA’s client_email to the drive or folder.
  *
  * Env:
  *   GOOGLE_SERVICE_ACCOUNT_JSON — full JSON key (GitHub Secret), or path via GOOGLE_SERVICE_ACCOUNT_JSON_FILE
@@ -61,6 +67,31 @@ function formatDriveError(err) {
   return parts.join(" — ");
 }
 
+function isStorageQuotaExceeded(err) {
+  const body = err?.response?.data;
+  const nested = body?.error?.errors;
+  const flat = body?.errors;
+  const list = Array.isArray(nested) ? nested : Array.isArray(flat) ? flat : [];
+  if (list.some((x) => x?.reason === "storageQuotaExceeded")) return true;
+  const msg = String(err?.message || body?.error?.message || "");
+  return (
+    msg.includes("storage quota") || msg.includes("storageQuotaExceeded")
+  );
+}
+
+function hintForDriveError(err) {
+  if (isStorageQuotaExceeded(err)) {
+    return `\nHint: Service accounts cannot use personal My Drive space. Create or use a folder on a **Shared drive** (Google Workspace), add your service account to that shared drive (Manage members → Content manager or Contributor), set GOOGLE_DRIVE_FOLDER_ID to that folder’s id, and re-run.`;
+  }
+  if (err?.code === 404 || err?.response?.status === 404) {
+    return `\nHint: Folder not found or the service account cannot see it — in Drive, Share the folder with the JSON file’s client_email (Editor).`;
+  }
+  if (err?.code === 403 || err?.response?.status === 403) {
+    return `\nHint: Permission denied — share the folder with client_email from the JSON (Editor). On a Shared drive, add the service account to the drive or folder with write access.`;
+  }
+  return "";
+}
+
 async function main() {
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
   const localPath = process.env.UPLOAD_FILE;
@@ -106,13 +137,9 @@ async function main() {
       supportsAllDrives: true,
     });
   } catch (e) {
-    const hint =
-      e?.code === 404 || e?.response?.status === 404
-        ? "\nHint: Folder not found or the service account cannot see it — in Drive, Share the folder with the JSON file’s client_email (Editor)."
-        : e?.code === 403 || e?.response?.status === 403
-          ? "\nHint: Permission denied — share that folder with client_email from the JSON (Editor). On a Shared drive, share the folder (or use Content manager on the drive if required)."
-          : "";
-    throw new Error(`${formatDriveError(e)}${hint}`, { cause: e });
+    throw new Error(`${formatDriveError(e)}${hintForDriveError(e)}`, {
+      cause: e,
+    });
   }
 
   console.log(JSON.stringify({ ok: true, file: created.data }, null, 2));
