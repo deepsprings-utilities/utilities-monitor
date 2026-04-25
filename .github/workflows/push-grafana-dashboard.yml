@@ -1,0 +1,36 @@
+# Run manually: Actions → "Push Grafana dashboard" → Run workflow
+# Required repository Secrets: GRAFANA_URL, GRAFANA_TOKEN, GRAFANA_DATASOURCE_UID
+# (Settings → Secrets and variables → Actions)
+
+name: Push Grafana dashboard
+
+on:
+  workflow_dispatch:
+    inputs:
+      dashboard:
+        description: "Path under neon-loader (e.g. grafana/dashboard.utilities-ops-hud.json)"
+        required: true
+        default: "grafana/dashboard.utilities-ops-hud.json"
+        type: string
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: neon-loader
+    env:
+      GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+      GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}
+      GRAFANA_DATASOURCE_UID: ${{ secrets.GRAFANA_DATASOURCE_UID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Push dashboard
+        run: node scripts/push-grafana-dashboard.mjs --dashboard "${{ inputs.dashboard }}"

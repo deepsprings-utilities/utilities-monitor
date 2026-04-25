@@ -99,6 +99,8 @@ Required environment variables:
 - `GRAFANA_TOKEN` (API token with dashboard write scope)
 - `GRAFANA_DATASOURCE_UID` (Postgres datasource UID in Grafana; must match the DB that holds `utility_measurement_tall` / `water_sampling_schedule`)
 
+In **GitHub**, add the same three as **Actions repository secrets** (or organization secrets) and run the **Push Grafana dashboard** workflow (`.github/workflows/push-grafana-dashboard.yml`) from the Actions tab.
+
 Dry-run validation (no API write):
 
 ```bash
