@@ -16,6 +16,7 @@ This package **builds a filled “Template A1” (diversion to direct use) workb
 - **Node 20+**
 - **`NEON_DATABASE_URL`** (required for `generate`)
 - Flow rows must match tall table reality: default metric is **`flow_wyman_avg`** (Wyman Creek on mb-006 per ingest / Grafana). If your export used **`flow_C`**, set Variable **`WATER_RIGHTS_FLOW_METRIC`** accordingly.
+- **`WATER_RIGHTS_FLOW_SCALE`** — multiply stored GPM before the workbook (CI defaults to **4** if Variable unset; set **`1`** to use raw Neon values).
 - Optional: **`WATER_RIGHTS_SERIAL`** or **`WATER_RIGHTS_DEVICE_ADDRESS`** (e.g. `mb-006`); **`REPORT_YEAR`**, **`REPORT_END`**, **`REPORT_TZ`**, and static columns (see `generate-a1-report.mjs`).
 
 ## Local run

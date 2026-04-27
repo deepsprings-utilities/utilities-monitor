@@ -22,6 +22,8 @@ jobs:
       WATER_RIGHTS_SERIAL: ${{ vars.WATER_RIGHTS_SERIAL || '' }}
       WATER_RIGHTS_FLOW_METRIC: ${{ vars.WATER_RIGHTS_FLOW_METRIC || 'flow_wyman_avg' }}
       WATER_RIGHTS_DEVICE_ADDRESS: ${{ vars.WATER_RIGHTS_DEVICE_ADDRESS || '' }}
+      # Neon GPM × scale for regulatory/reporting (unset → 4)
+      WATER_RIGHTS_FLOW_SCALE: ${{ vars.WATER_RIGHTS_FLOW_SCALE || '4' }}
       BENEFICIAL_USE: ${{ vars.WATER_RIGHTS_BENEFICIAL_USE || '' }}
       WATER_RIGHT: ${{ vars.WATER_RIGHTS_WATER_RIGHT || '' }}
       REDIVERSION_STATUS: ${{ vars.WATER_RIGHTS_REDIVERSION_STATUS || '' }}

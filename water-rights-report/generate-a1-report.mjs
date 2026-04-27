@@ -14,6 +14,8 @@
  *   WATER_RIGHTS_SERIAL — optional device serial filter
  *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg
  *   WATER_RIGHTS_DEVICE_ADDRESS — optional e.g. mb-006
+ *   WATER_RIGHTS_FLOW_SCALE — multiply Neon GPM before report math + cells (default 1 local;
+ *     GitHub workflow defaults to 4 when Variable unset — set to 1 to disable)
  *   FLOW_RATE_UNIT_TEXT — default "GALLONS PER MINUTE"
  *   VOLUME_UNIT_TEXT — default "GALLONS"
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
@@ -146,6 +148,14 @@ async function logHydroFlowDiagnostics(client, tStart, tEndExclusive) {
   );
 }
 
+function applyFlowScale(rows, scale) {
+  if (scale === 1) return rows;
+  return rows.map((r) => ({
+    ...r,
+    metric_value: Number(r.metric_value) * scale,
+  }));
+}
+
 function incrementalGallons(rows, startUtc) {
   const out = [];
   for (let i = 0; i < rows.length; i += 1) {
@@ -188,6 +198,13 @@ async function main() {
   const serial = env("WATER_RIGHTS_SERIAL");
   const deviceAddress = env("WATER_RIGHTS_DEVICE_ADDRESS");
   const metricKey = env("WATER_RIGHTS_FLOW_METRIC", "flow_wyman_avg");
+  const flowScaleRaw = env("WATER_RIGHTS_FLOW_SCALE", "1");
+  const flowScale = Number(flowScaleRaw);
+  if (!Number.isFinite(flowScale) || flowScale <= 0) {
+    throw new Error(
+      `Invalid WATER_RIGHTS_FLOW_SCALE: ${flowScaleRaw} (expected positive number)`,
+    );
+  }
   const flowUnit = env("FLOW_RATE_UNIT_TEXT", "GALLONS PER MINUTE");
   const volUnit = env("VOLUME_UNIT_TEXT", "GALLONS");
   const beneficial = env("BENEFICIAL_USE");
@@ -203,7 +220,7 @@ async function main() {
 
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
-    const { rows, startUtc, tEndExclusive } = await loadRows(pool, {
+    let { rows, startUtc, tEndExclusive } = await loadRows(pool, {
       year,
       endInclusiveYmd: endInclusive,
       serial: serial || null,
@@ -211,6 +228,8 @@ async function main() {
       metricKey,
       tz,
     });
+
+    rows = applyFlowScale(rows, flowScale);
 
     if (rows.length === 0) {
       console.warn(
@@ -221,6 +240,7 @@ async function main() {
           year,
           endInclusive,
           metricKey,
+          flowScale,
           serial: serial || null,
           deviceAddress: deviceAddress || null,
         }),
@@ -271,6 +291,7 @@ async function main() {
           year,
           endInclusive,
           metricKey,
+          flowScale,
           serial: serial || null,
           deviceAddress: deviceAddress || null,
         },
