@@ -6,8 +6,11 @@
  * 1) https://www.dropbox.com/developers/apps → Create app → Scoped access
  * 2) Choose "App folder" (simpler, isolated) or "Full Dropbox" (pick a /path)
  * 3) Permissions: enable `files.content.write` (and `files.content.read` if you want to verify)
- * 4) Get a long-lived **refresh token** (one-time, human-in-the-loop): use OAuth2 with
- *    `token_access_type=offline` so the token response includes `refresh_token`.
+ * 4) Get a long-lived **refresh token** (one-time, human-in-the-loop): OAuth2 with
+ *    `token_access_type=offline` and, for **scoped** apps, a **`scope=`** query on the
+ *    authorize URL listing `files.content.write` (and optional `files.content.read`).
+ *    Tokens issued **before** you enabled a permission in the App Console do **not** gain
+ *    that scope until you **re-authorize** and replace `DROPBOX_REFRESH_TOKEN`.
  *    See: https://www.dropbox.com/developers/documentation/http/documentation#authorization
  *    (or search “Dropbox refresh token generator” for small helper tools; keep secrets out of git.)
  *
@@ -107,6 +110,25 @@ main().catch((err) => {
         "  • Token was revoked in Dropbox or app settings changed — generate a new refresh token.\n",
     );
   }
+
+  const tag = err?.error?.error?.[".tag"];
+  const missingScope =
+    err?.status === 401 &&
+    (tag === "missing_scope" ||
+      String(err?.error?.error_summary || "").includes("missing_scope")) ||
+    msg.includes("missing_scope");
+  if (missingScope) {
+    const need = err?.error?.error?.required_scope || "files.content.write";
+    console.error(
+      `\nDropbox 401 missing_scope (needs ${need}) — the refresh token was issued without this scope.\n` +
+        "  • In App Console → Permissions, enable the scope and **Submit**.\n" +
+        "  • Re-run OAuth **authorize** with **scope** in the URL, e.g.:\n" +
+        "    scope=files.content.write%20files.content.read\n" +
+        "    (with token_access_type=offline). Exchange the new code for tokens.\n" +
+        "  • Replace DROPBOX_REFRESH_TOKEN in GitHub with the **new** refresh_token.\n",
+    );
+  }
+
   console.error(err);
   process.exit(1);
 });
