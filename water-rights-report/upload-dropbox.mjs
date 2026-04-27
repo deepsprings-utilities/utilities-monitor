@@ -34,10 +34,23 @@ function joinDropboxPath(folder, name) {
   return `${base}${file}`;
 }
 
+/** GitHub / shell paste often adds spaces or wrapping quotes — Dropbox rejects those as malformed. */
+function cleanDropboxSecret(raw) {
+  if (raw == null || typeof raw !== "string") return "";
+  let s = raw.trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
+
 async function main() {
-  const appKey = process.env.DROPBOX_APP_KEY;
-  const appSecret = process.env.DROPBOX_APP_SECRET;
-  const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
+  const appKey = cleanDropboxSecret(process.env.DROPBOX_APP_KEY);
+  const appSecret = cleanDropboxSecret(process.env.DROPBOX_APP_SECRET);
+  const refreshToken = cleanDropboxSecret(process.env.DROPBOX_REFRESH_TOKEN);
   const localPath = process.env.UPLOAD_FILE;
   if (!appKey || !appSecret || !refreshToken) {
     throw new Error(
@@ -78,6 +91,22 @@ async function main() {
 }
 
 main().catch((err) => {
+  const msg = String(err?.message || err);
+  const nested = err?.error;
+  const invalidGrant =
+    (nested && typeof nested === "object" && nested.error === "invalid_grant") ||
+    nested === "invalid_grant" ||
+    msg.includes("invalid_grant") ||
+    msg.includes("malformed");
+  if (invalidGrant) {
+    console.error(
+      "\nDropbox invalid_grant / malformed refresh token — usual causes:\n" +
+        "  • Secret value has extra spaces, line breaks, or wrapping quotes — re-paste the token in GitHub (no quotes).\n" +
+        "  • Value is an access_token (short) instead of refresh_token from OAuth with token_access_type=offline.\n" +
+        "  • Token was created for a different Dropbox app than DROPBOX_APP_KEY / DROPBOX_APP_SECRET.\n" +
+        "  • Token was revoked in Dropbox or app settings changed — generate a new refresh token.\n",
+    );
+  }
   console.error(err);
   process.exit(1);
 });

@@ -43,6 +43,8 @@ A **monthly** (and manual) GitHub Action runs in **`water-rights-report/`**: see
    - `WATER_RIGHTS_DROPBOX_DEST_FOLDER` — destination **folder** only, Dropbox path style. Examples: `""` or empty / unset = app-folder root; `"/WaterRights/A1"` for Full Dropbox (leading slash, no filename). The workflow passes the generated `.xlsx` name; the script **overwrites** the same name each run unless you change naming in `generate-a1-report.mjs`.
 5. **Run once** — **Actions → Water rights Template A1 report → Run workflow**. Confirm the **Upload to Dropbox** step runs and logs JSON with `"ok": true`.
 
+**If Dropbox returns `invalid_grant` / `refresh_token is malformed`:** the string in **`DROPBOX_REFRESH_TOKEN`** is wrong for this app—not necessarily “your fault.” Re-paste with **no surrounding quotes**, no line breaks (GitHub Secrets are one line). Confirm you stored the **`refresh_token`** from an OAuth response with **`token_access_type=offline`**, not the short **`access_token`**. The refresh token must come from **the same** Dropbox app as `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET`. After rotating app secret or revoking access, generate a **new** refresh token.
+
 If you use **Google Drive** as well, set `WATER_RIGHTS_GOOGLE_DRIVE_FOLDER_ID`; both upload steps can run when their conditions are met.
 
 ## Monorepo context
