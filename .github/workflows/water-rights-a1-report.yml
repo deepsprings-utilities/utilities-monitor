@@ -15,6 +15,7 @@ jobs:
       run:
         working-directory: water-rights-report
     env:
+      REPORT_FLOW_STREAM: wyman
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       REPORT_TZ: ${{ vars.WATER_RIGHTS_REPORT_TZ || 'America/Los_Angeles' }}
       REPORT_YEAR: ${{ vars.WATER_RIGHTS_REPORT_YEAR || '' }}
@@ -53,6 +54,58 @@ jobs:
           DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
           DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
           DROPBOX_DEST_FOLDER: ${{ vars.WATER_RIGHTS_DROPBOX_DEST_FOLDER || '' }}
+        run: |
+          set -euo pipefail
+          OUT="$(ls -1 dist/*.xlsx | head -1)"
+          export UPLOAD_FILE="$OUT"
+          export UPLOAD_NAME="$(basename "$OUT")"
+          npm run upload-dropbox
+
+  a1-booster-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: water-rights-report
+    env:
+      REPORT_FLOW_STREAM: booster
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      REPORT_TZ: ${{ vars.WATER_RIGHTS_REPORT_TZ || 'America/Los_Angeles' }}
+      REPORT_YEAR: ${{ vars.BOOSTER_REPORT_YEAR || vars.WATER_RIGHTS_REPORT_YEAR || '' }}
+      REPORT_END: ${{ vars.BOOSTER_REPORT_END || vars.WATER_RIGHTS_REPORT_END || '' }}
+      WATER_RIGHTS_SERIAL: ${{ vars.BOOSTER_SERIAL || '' }}
+      WATER_RIGHTS_FLOW_METRIC: ${{ vars.BOOSTER_FLOW_METRIC || 'flow_avg' }}
+      WATER_RIGHTS_DEVICE_ADDRESS: ${{ vars.BOOSTER_DEVICE_ADDRESS || 'mb-003' }}
+      WATER_RIGHTS_FLOW_SCALE: ${{ vars.BOOSTER_FLOW_SCALE || '4' }}
+      BENEFICIAL_USE: ${{ vars.BOOSTER_BENEFICIAL_USE || vars.WATER_RIGHTS_BENEFICIAL_USE || '' }}
+      WATER_RIGHT: ${{ vars.BOOSTER_WATER_RIGHT || vars.WATER_RIGHTS_WATER_RIGHT || '' }}
+      REDIVERSION_STATUS: ${{ vars.BOOSTER_REDIVERSION_STATUS || vars.WATER_RIGHTS_REDIVERSION_STATUS || '' }}
+      PLACE_OF_USE: ${{ vars.BOOSTER_PLACE_OF_USE || vars.WATER_RIGHTS_PLACE_OF_USE || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: water-rights-report/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate booster A1 workbook
+        run: npm run generate
+
+      - name: Upload booster report to Dropbox
+        if: ${{ vars.BOOSTER_USE_DROPBOX == 'true' }}
+        env:
+          DROPBOX_APP_KEY: ${{ secrets.DROPBOX_APP_KEY }}
+          DROPBOX_APP_SECRET: ${{ secrets.DROPBOX_APP_SECRET }}
+          DROPBOX_REFRESH_TOKEN: ${{ secrets.DROPBOX_REFRESH_TOKEN }}
+          DROPBOX_DEST_FOLDER: ${{ vars.BOOSTER_DROPBOX_DEST_FOLDER || '' }}
         run: |
           set -euo pipefail
           OUT="$(ls -1 dist/*.xlsx | head -1)"

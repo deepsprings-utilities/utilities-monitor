@@ -1,6 +1,11 @@
 # Water rights Template A1 (Excel from Neon)
 
-This package **builds a filled “Template A1” (diversion to direct use) workbook** from flow data in **Neon**—for example Wyman Creek flow stored under a chosen metric (default `flow_C` for the hydro / `mb-006` line). It is **separate** from AcquiSuite HTTP ingest (`worker/`) and from the main R2→Neon log pipeline (`neon-loader/`), but it **reads the same database** the loader populates.
+This package **builds a filled “Template A1” (diversion to direct use) workbook** from flow GPM in **Neon** using the same Excel template. Two **streams** are supported:
+
+- **Wyman** (`REPORT_FLOW_STREAM=wyman`, default): `hydro_plant` + `flow_wyman_avg` (mb-006 Wyman Creek).
+- **Booster** (`REPORT_FLOW_STREAM=booster`): `booster_pump` + `flow_avg` (mb-003 F3 booster, per Grafana HUD).
+
+It is **separate** from AcquiSuite HTTP ingest (`worker/`) and R2→Neon (`neon-loader/`), but **reads the same database** the loader populates.
 
 ## What’s in this folder
 
@@ -9,7 +14,7 @@ This package **builds a filled “Template A1” (diversion to direct use) workb
 | [`generate-a1-report.mjs`](generate-a1-report.mjs) | Queries Postgres, fills the Excel template, writes a dated `.xlsx` (configurable `OUT_PATH`). |
 | [`upload-google-drive.mjs`](upload-google-drive.mjs) / [`upload-dropbox.mjs`](upload-dropbox.mjs) | Optional upload of the generated file (credentials via env; see script headers). |
 | [`assets/template-a1.xlsx`](assets/template-a1.xlsx) | Excel layout the generator fills. |
-| [`package.json`](package.json) | Scripts: `npm run generate`, `upload-drive`, `upload-dropbox`. |
+| [`package.json`](package.json) | Scripts: `generate`, `generate:wyman`, `generate:booster`, `upload-dropbox`. |
 
 ## Requirements
 
@@ -30,7 +35,14 @@ npm run generate
 
 ## Automation
 
-A **monthly** (and manual) GitHub Action runs in **`water-rights-report/`**: see [`.github/workflows/water-rights-a1-report.yml`](../.github/workflows/water-rights-a1-report.yml) for job env and secrets/variables (Neon URL, report year, flow metric, etc.).
+A **monthly** (and manual) workflow runs **two jobs** from [`.github/workflows/water-rights-a1-report.yml`](../.github/workflows/water-rights-a1-report.yml):
+
+| Job | Stream | Dropbox enable Variable | Folder Variable |
+|-----|--------|-------------------------|-----------------|
+| `a1-report` | Wyman | `WATER_RIGHTS_USE_DROPBOX` | `WATER_RIGHTS_DROPBOX_DEST_FOLDER` |
+| `a1-booster-report` | Booster | `BOOSTER_USE_DROPBOX` | `BOOSTER_DROPBOX_DEST_FOLDER` |
+
+Booster timing/year defaults fall back to the same **`WATER_RIGHTS_REPORT_*`** Variables if **`BOOSTER_REPORT_YEAR`** / **`BOOSTER_REPORT_END`** are unset. Booster-specific overrides: **`BOOSTER_FLOW_METRIC`**, **`BOOSTER_DEVICE_ADDRESS`**, **`BOOSTER_FLOW_SCALE`**, static column `BOOSTER_*` or fallback `WATER_RIGHTS_*`.
 
 ### Dropbox upload (monthly A1 `.xlsx`)
 
@@ -41,8 +53,9 @@ A **monthly** (and manual) GitHub Action runs in **`water-rights-report/`**: see
    - `DROPBOX_APP_SECRET`  
    - `DROPBOX_REFRESH_TOKEN`
 4. **GitHub Variables** (repository **Actions → Variables**):  
-   - `WATER_RIGHTS_USE_DROPBOX` = `true` (exact string — enables the upload step)  
-   - `WATER_RIGHTS_DROPBOX_DEST_FOLDER` — destination **folder** only, Dropbox path style. Examples: `""` or empty / unset = app-folder root; `"/WaterRights/A1"` for Full Dropbox (leading slash, no filename). The workflow passes the generated `.xlsx` name; the script **overwrites** the same name each run unless you change naming in `generate-a1-report.mjs`.
+   - **Wyman job:** `WATER_RIGHTS_USE_DROPBOX` = `true`; `WATER_RIGHTS_DROPBOX_DEST_FOLDER` — folder path only (e.g. `"/WaterRights/Wyman"`).  
+   - **Booster job:** `BOOSTER_USE_DROPBOX` = `true`; `BOOSTER_DROPBOX_DEST_FOLDER` — separate folder for booster outputs (e.g. `"/WaterRights/Booster"`).  
+   Empty/unset folder = app-folder root; filenames are `Template-A1-Wyman-…` vs `Template-A1-Booster-…` so two jobs do not overwrite each other when using the same Dropbox app.
 5. **Run once** — **Actions → Water rights Template A1 report → Run workflow**. Confirm the **Upload to Dropbox** step runs and logs JSON with `"ok": true`.
 
 **If Dropbox returns `invalid_grant` / `refresh_token is malformed`:** the string in **`DROPBOX_REFRESH_TOKEN`** is wrong for this app—not necessarily “your fault.” Re-paste with **no surrounding quotes**, no line breaks (GitHub Secrets are one line). Confirm you stored the **`refresh_token`** from an OAuth response with **`token_access_type=offline`**, not the short **`access_token`**. The refresh token must come from **the same** Dropbox app as `DROPBOX_APP_KEY` / `DROPBOX_APP_SECRET`. After rotating app secret or revoking access, generate a **new** refresh token.

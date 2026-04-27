@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Fills Template A1 (Diversion to Direct Use) from Neon: Wyman Creek flow at hydro (mb-006 / hydro_flex_v1).
+ * Fills Template A1 (Diversion to Direct Use) from Neon flow GPM rows.
  *
- * Wyman Creek GPM in Neon uses metric_key `flow_wyman_avg` (see neon-loader label-map / HUD).
- * Override with WATER_RIGHTS_FLOW_METRIC if your tall table uses another key (legacy `flow_C`).
- * Optional: WATER_RIGHTS_SERIAL or WATER_RIGHTS_DEVICE_ADDRESS to narrow rows.
+ * REPORT_FLOW_STREAM:
+ *   - `wyman` (default): hydro_plant + metric `flow_wyman_avg` (Wyman / mb-006).
+ *   - `booster`: booster_pump + metric `flow_avg` (F3 booster / mb-003 per Grafana HUD).
+ *
+ * Override metric/device with WATER_RIGHTS_FLOW_METRIC / WATER_RIGHTS_DEVICE_ADDRESS.
  *
  * Env:
  *   NEON_DATABASE_URL (required)
@@ -12,14 +14,15 @@
  *   REPORT_END — inclusive end date YYYY-MM-DD in REPORT_TZ (default: yesterday)
  *   REPORT_TZ — IANA tz for DATE/TIME columns (default: America/Los_Angeles)
  *   WATER_RIGHTS_SERIAL — optional device serial filter
- *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg
- *   WATER_RIGHTS_DEVICE_ADDRESS — optional e.g. mb-006
+ *   REPORT_FLOW_STREAM — `wyman` | `booster` (default wyman)
+ *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg (wyman) or flow_avg (booster)
+ *   WATER_RIGHTS_DEVICE_ADDRESS — optional; booster defaults to mb-003 if unset
  *   WATER_RIGHTS_FLOW_SCALE — multiply Neon GPM before report math + cells (default 1 local;
  *     GitHub workflow defaults to 4 when Variable unset — set to 1 to disable)
  *   FLOW_RATE_UNIT_TEXT — default "GALLONS PER MINUTE"
  *   VOLUME_UNIT_TEXT — default "GALLONS"
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
- *   OUT_PATH — output xlsx path (default: ./dist/Template-A1-Wyman-{year}-asof-{end}.xlsx)
+ *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  */
 
 import fs from "node:fs";
@@ -75,7 +78,17 @@ function formatLocalDateTime(isoTs, tz) {
   return { dateStr, timeStr };
 }
 
-async function loadRows(client, { year, endInclusiveYmd, serial, deviceAddress, metricKey, tz }) {
+function plantClause(stream) {
+  if (stream === "booster") {
+    return `(physical_group = 'booster_pump' OR source_system = 'booster_pump')`;
+  }
+  return `(physical_group = 'hydro_plant' OR source_system = 'hydro_plant')`;
+}
+
+async function loadRows(
+  client,
+  { year, endInclusiveYmd, serial, deviceAddress, metricKey, tz, stream },
+) {
   const startYmd = `${year}-01-01`;
   const {
     rows: [bounds],
@@ -89,10 +102,11 @@ async function loadRows(client, { year, endInclusiveYmd, serial, deviceAddress, 
   const tEndEx = bounds.t_end_exclusive;
 
   const params = [tStart, tEndEx, metricKey];
+  const plant = plantClause(stream);
   let q = `
     SELECT record_ts, metric_value, serial
     FROM public.utility_measurement_tall
-    WHERE (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
+    WHERE ${plant}
       AND metric_key = $3
       AND COALESCE(TRIM(lower(unit)), '') LIKE '%gpm%'
       AND record_ts >= $1::timestamptz
@@ -117,8 +131,9 @@ async function loadRows(client, { year, endInclusiveYmd, serial, deviceAddress, 
   };
 }
 
-/** When main query returns zero rows — log what hydro flow keys actually exist in range (GitHub log). */
-async function logHydroFlowDiagnostics(client, tStart, tEndExclusive) {
+/** When main query returns zero rows — log metric_key/unit/device in range (GitHub log). */
+async function logFlowDiagnostics(client, tStart, tEndExclusive, stream) {
+  const plant = plantClause(stream);
   const { rows } = await client.query(
     `
     SELECT metric_key,
@@ -126,7 +141,7 @@ async function logHydroFlowDiagnostics(client, tStart, tEndExclusive) {
            COALESCE(device_address, '') AS device_address,
            COUNT(*)::bigint AS n
     FROM public.utility_measurement_tall
-    WHERE (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
+    WHERE ${plant}
       AND record_ts >= $1::timestamptz
       AND record_ts < $2::timestamptz
     GROUP BY metric_key, unit, device_address
@@ -138,8 +153,9 @@ async function logHydroFlowDiagnostics(client, tStart, tEndExclusive) {
   console.warn(
     JSON.stringify(
       {
-        warn: "hydro_flow_metric_keys_in_date_range",
-        hint: "Pick metric_key (+ unit if needed) for WATER_RIGHTS_FLOW_METRIC / filters.",
+        warn: "flow_metric_keys_in_date_range",
+        stream,
+        hint: "Pick metric_key (+ device) for WATER_RIGHTS_FLOW_METRIC / WATER_RIGHTS_DEVICE_ADDRESS.",
         samples: rows,
       },
       null,
@@ -195,9 +211,21 @@ async function main() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(endInclusive)) {
     throw new Error(`Invalid REPORT_END: ${endInclusive} (expected YYYY-MM-DD)`);
   }
+  const streamRaw = env("REPORT_FLOW_STREAM", "wyman").toLowerCase();
+  if (streamRaw !== "wyman" && streamRaw !== "booster") {
+    throw new Error(
+      `REPORT_FLOW_STREAM must be wyman or booster (got ${streamRaw})`,
+    );
+  }
+
   const serial = env("WATER_RIGHTS_SERIAL");
-  const deviceAddress = env("WATER_RIGHTS_DEVICE_ADDRESS");
-  const metricKey = env("WATER_RIGHTS_FLOW_METRIC", "flow_wyman_avg");
+  let deviceAddress = env("WATER_RIGHTS_DEVICE_ADDRESS");
+  if (!deviceAddress && streamRaw === "booster") {
+    deviceAddress = "mb-003";
+  }
+  const metricDefault =
+    streamRaw === "booster" ? "flow_avg" : "flow_wyman_avg";
+  const metricKey = env("WATER_RIGHTS_FLOW_METRIC", metricDefault);
   const flowScaleRaw = env("WATER_RIGHTS_FLOW_SCALE", "1");
   const flowScale = Number(flowScaleRaw);
   if (!Number.isFinite(flowScale) || flowScale <= 0) {
@@ -227,6 +255,7 @@ async function main() {
       deviceAddress: deviceAddress || null,
       metricKey,
       tz,
+      stream: streamRaw,
     });
 
     rows = applyFlowScale(rows, flowScale);
@@ -239,13 +268,14 @@ async function main() {
             "Match WATER_RIGHTS_FLOW_METRIC (+ unit containing gpm, case-insensitive now) and date range; clear SERIAL/device if unsure.",
           year,
           endInclusive,
+          stream: streamRaw,
           metricKey,
           flowScale,
           serial: serial || null,
           deviceAddress: deviceAddress || null,
         }),
       );
-      await logHydroFlowDiagnostics(pool, startUtc, tEndExclusive);
+      await logFlowDiagnostics(pool, startUtc, tEndExclusive, streamRaw);
     }
 
     const gallons = incrementalGallons(rows, startUtc);
@@ -277,9 +307,13 @@ async function main() {
 
     const dist = path.join(__dirname, "dist");
     fs.mkdirSync(dist, { recursive: true });
+    const fileSlug = streamRaw === "booster" ? "Booster" : "Wyman";
     const outPath =
       env("OUT_PATH") ||
-      path.join(dist, `Template-A1-Wyman-${year}-asof-${endInclusive}.xlsx`);
+      path.join(
+        dist,
+        `Template-A1-${fileSlug}-${year}-asof-${endInclusive}.xlsx`,
+      );
 
     await workbook.xlsx.writeFile(outPath);
     console.log(
@@ -288,6 +322,7 @@ async function main() {
           ok: true,
           rowsWritten: rows.length,
           outPath,
+          stream: streamRaw,
           year,
           endInclusive,
           metricKey,
