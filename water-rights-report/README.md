@@ -30,6 +30,21 @@ npm run generate
 
 A **monthly** (and manual) GitHub Action runs in **`water-rights-report/`**: see [`.github/workflows/water-rights-a1-report.yml`](../.github/workflows/water-rights-a1-report.yml) for job env and secrets/variables (Neon URL, report year, flow metric, etc.).
 
+### Dropbox upload (monthly A1 `.xlsx`)
+
+1. **Dropbox app** — [Dropbox Developers](https://www.dropbox.com/developers/apps) → Create app → **Scoped access** → choose **App folder** (isolated tree) or **Full Dropbox** (you choose paths under `/`). Enable **`files.content.write`** (and read if you want). Note **App key** and **App secret**.
+2. **Refresh token** — OAuth with `token_access_type=offline` so you get a **refresh token** (one-time human step). Store it only in GitHub Secrets, never in the repo. Details in [`upload-dropbox.mjs`](upload-dropbox.mjs) header comment.
+3. **GitHub Secrets** (repository **Actions → Secrets**):  
+   - `DROPBOX_APP_KEY`  
+   - `DROPBOX_APP_SECRET`  
+   - `DROPBOX_REFRESH_TOKEN`
+4. **GitHub Variables** (repository **Actions → Variables**):  
+   - `WATER_RIGHTS_USE_DROPBOX` = `true` (exact string — enables the upload step)  
+   - `WATER_RIGHTS_DROPBOX_DEST_FOLDER` — destination **folder** only, Dropbox path style. Examples: `""` or empty / unset = app-folder root; `"/WaterRights/A1"` for Full Dropbox (leading slash, no filename). The workflow passes the generated `.xlsx` name; the script **overwrites** the same name each run unless you change naming in `generate-a1-report.mjs`.
+5. **Run once** — **Actions → Water rights Template A1 report → Run workflow**. Confirm the **Upload to Dropbox** step runs and logs JSON with `"ok": true`.
+
+If you use **Google Drive** as well, set `WATER_RIGHTS_GOOGLE_DRIVE_FOLDER_ID`; both upload steps can run when their conditions are met.
+
 ## Monorepo context
 
 See the root [`README.md`](../README.md) for how this folder fits next to `worker/`, `neon-loader/`, and `water-compliance/`.
