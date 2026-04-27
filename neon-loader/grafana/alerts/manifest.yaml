@@ -1,6 +1,9 @@
 # Grafana Cloud alert rules — documentation mirror (source of truth is Grafana).
 # Update Grafana first, then sync SQL snippets here when queries change.
 #
+# Email parity: GitHub Actions `neon-email-alerts` runs `notify-email-alerts.js` which mirrors
+# stale-per-group, hydro-out (kW threshold), water due window, and alarm flags — see source comments.
+#
 # Instance: Deep Springs Utilities Grafana Cloud (org-specific UIDs).
 
 alerts:

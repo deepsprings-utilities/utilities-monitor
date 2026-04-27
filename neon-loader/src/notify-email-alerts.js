@@ -1,6 +1,8 @@
 /**
- * Portable freshness alerts: query Neon, send email via Resend HTTP API.
- * GitHub Actions: set NEON_DATABASE_URL, RESEND_API_KEY, ALERT_EMAIL_FROM, ALERT_EMAIL_TO.
+ * Portable ops alerts (Neon → Resend): parity with Grafana rules documented under
+ * neon-loader/grafana/alerts/. Bundles stale data, hydro output, water due dates, alarm flags.
+ *
+ * GitHub Actions: NEON_DATABASE_URL, RESEND_API_KEY, ALERT_EMAIL_FROM, ALERT_EMAIL_TO.
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +20,8 @@ function isMainModule() {
   }
 }
 
-const ALERT_KEY = "utility_data_stale";
+/** Dedupe key — bump if bundle shape changes materially. */
+const ALERT_KEY = "email_ops_bundle_v1";
 
 /** @param {string | undefined} raw */
 export function parseRecipientList(raw) {
@@ -36,46 +39,69 @@ function envInt(name, defaultValue) {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : defaultValue;
 }
 
+function envFloat(name, defaultValue) {
+  const v = process.env[name];
+  if (v === undefined || v === "") return defaultValue;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : defaultValue;
+}
+
 /** For NOTIFY_SEND_TEST one-shot probe (GitHub Secret = 1 during a manual run). */
 function envTruthy(name) {
   const v = process.env[name];
   return v === "1" || v === "true" || v === "yes";
 }
 
-/**
- * @param {{ physical_group: string, latest_ts: Date | string | null }[]} violations
- */
-function stablePayload(violations) {
-  const lines = violations
-    .map((v) => {
-      const ts =
-        v.latest_ts == null
-          ? "null"
-          : typeof v.latest_ts === "string"
-            ? v.latest_ts
-            : v.latest_ts.toISOString();
-      return `${v.physical_group}\t${ts}`;
-    })
-    .sort();
-  return lines.join("\n");
+function iso(ts) {
+  if (ts == null) return "null";
+  return typeof ts === "string" ? ts : ts.toISOString();
 }
 
 /**
- * @param {import('pg').PoolClient} client
- * @param {number} staleAfterMinutes
+ * Stable dedupe fingerprint for the whole bundle.
+ * Alarm rows omit record_ts so cooldown works while the same meters stay in alarm.
  */
-async function collectViolations(client, staleAfterMinutes) {
+export function buildBundlePayload(bundle) {
+  const staleLines = bundle.stale
+    .map((v) => `${v.physical_group}\t${iso(v.latest_ts)}`)
+    .sort();
+  let hydroPart = "norow";
+  if (bundle.hydro != null) {
+    const v =
+      bundle.hydro.value != null && Number.isFinite(Number(bundle.hydro.value))
+        ? Number(bundle.hydro.value).toFixed(2)
+        : "";
+    hydroPart = `${bundle.hydro.fire ? "1" : "0"}|${v}`;
+  }
+  const waterPart = `${bundle.water.skipped ? "skip" : "ok"}|${bundle.water.count}`;
+  const alarmLines = bundle.alarms
+    .map(
+      (r) =>
+        `${r.serial}|${r.metric_key}|${r.low_alarm}|${r.high_alarm}|${r.physical_group}`,
+    )
+    .sort();
+  return ["STALE", staleLines.join(";"), "HYDRO", hydroPart, "WATER", waterPart, "ALRM", alarmLines.join(";")].join("\n");
+}
+
+export function bundleHasFire(bundle) {
+  if (bundle.stale.length > 0) return true;
+  if (bundle.hydro?.fire) return true;
+  if (!bundle.water.skipped && bundle.water.count > 0) return true;
+  if (bundle.alarms.length > 0) return true;
+  return false;
+}
+
+/**
+ * Latest row per physical_group older than threshold (matches previous neon-loader behavior).
+ * @param {import('pg').PoolClient} client
+ */
+async function collectStaleGroups(client, staleAfterMinutes) {
   const { rows: countRows } = await client.query(
     "SELECT COUNT(*)::bigint AS n FROM utility_measurement_tall",
   );
   const n = Number(countRows[0]?.n ?? 0);
   if (n === 0) {
-    return [
-      {
-        physical_group: "(no rows)",
-        latest_ts: null,
-      },
-    ];
+    return [{ physical_group: "(no rows)", latest_ts: null }];
   }
 
   const { rows } = await client.query(
@@ -96,10 +122,112 @@ async function collectViolations(client, staleAfterMinutes) {
 }
 
 /**
+ * Grafana "Hydro Out": latest hydro kW < threshold only if reading is recent (see manifest evaluate_for).
+ * Matches neon-loader/grafana/alerts/queries/hydro-out-alert.sql + threshold_kw 5.
+ * @param {import('pg').PoolClient} client
+ */
+async function evaluateHydroOut(client, recentMinutes, minKw) {
+  const { rows } = await client.query(
+    `
+    SELECT metric_value, record_ts
+    FROM utility_measurement_tall
+    WHERE physical_group = 'hydro_plant'
+      AND metric_key = 'power_instantaneous'
+      AND unit = 'kW'
+    ORDER BY record_ts DESC
+    LIMIT 1
+    `,
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  const ts = row.record_ts instanceof Date ? row.record_ts : new Date(row.record_ts);
+  const ageMs = Date.now() - ts.getTime();
+  const recent =
+    ageMs <= recentMinutes * 60 * 1000 && ageMs >= -120_000;
+  const value = Number(row.metric_value);
+  if (!recent) {
+    return { fire: false, value, record_ts: ts, reason: "reading_not_recent" };
+  }
+  const fire = Number.isFinite(value) && value < minKw;
+  return { fire, value, record_ts: ts };
+}
+
+/**
+ * Grafana "Due within 45 days (backlog capped at 30d past)" — water-reporting-alert-count.sql
+ * @param {import('pg').PoolClient} client
+ */
+async function countWaterDueSoon(client) {
+  const reg = await client.query(
+    `SELECT to_regclass('public.water_sampling_schedule') AS t`,
+  );
+  if (!reg.rows[0]?.t) {
+    return { count: 0, skipped: true };
+  }
+  const { rows } = await client.query(`
+    SELECT COUNT(*)::bigint AS count
+    FROM water_sampling_schedule
+    WHERE next_due_date IS NOT NULL
+      AND next_due_date <= (CURRENT_DATE + INTERVAL '45 days')::date
+      AND next_due_date >= (CURRENT_DATE - INTERVAL '30 days')::date
+  `);
+  const count = Number(rows[0]?.count ?? 0);
+  return { count, skipped: false };
+}
+
+/**
+ * Rows with low_alarm or high_alarm in lookback window.
+ * @param {import('pg').PoolClient} client
+ */
+async function collectAlarmRows(client, lookbackMinutes, limit) {
+  const { rows } = await client.query(
+    `
+    SELECT serial, metric_key, record_ts, low_alarm, high_alarm, physical_group
+    FROM utility_measurement_tall
+    WHERE (low_alarm OR high_alarm)
+      AND record_ts >= NOW() - ($1::numeric * INTERVAL '1 minute')
+    ORDER BY record_ts DESC
+    LIMIT $2
+    `,
+    [lookbackMinutes, limit],
+  );
+  return rows.map((r) => ({
+    serial: r.serial,
+    metric_key: r.metric_key,
+    record_ts: r.record_ts,
+    low_alarm: r.low_alarm,
+    high_alarm: r.high_alarm,
+    physical_group: r.physical_group,
+  }));
+}
+
+async function collectBundle(client, opts) {
+  const stale = await collectStaleGroups(client, opts.staleAfterMinutes);
+  const hydroRaw = await evaluateHydroOut(
+    client,
+    opts.hydroRecentMinutes,
+    opts.hydroMinKw,
+  );
+  const water = await countWaterDueSoon(client);
+  const alarms = await collectAlarmRows(
+    client,
+    opts.alarmLookbackMinutes,
+    opts.alarmRowLimit,
+  );
+
+  return {
+    stale,
+    hydro: hydroRaw,
+    water,
+    alarms,
+  };
+}
+
+/**
  * @param {import('pg').PoolClient} client
  * @param {string} payload
  * @param {number} cooldownMinutes
- * @returns {Promise<boolean>} true if we should send
  */
 async function shouldSendAfterDedupe(client, payload, cooldownMinutes) {
   const { rows } = await client.query(
@@ -115,10 +243,6 @@ async function shouldSendAfterDedupe(client, payload, cooldownMinutes) {
   return true;
 }
 
-/**
- * @param {import('pg').PoolClient} client
- * @param {string} payload
- */
 async function recordSent(client, payload) {
   await client.query(
     `
@@ -157,7 +281,6 @@ async function sendResendEmail({ apiKey, from, toList, subject, html, text }) {
   return json;
 }
 
-/** One message to verify Resend + DNS; does not touch alert_notification_state. */
 async function sendTestProbeEmail({ apiKey, from, toList }) {
   const run = process.env.GITHUB_RUN_ID ?? "";
   const repo = process.env.GITHUB_REPOSITORY ?? "";
@@ -183,10 +306,89 @@ async function sendTestProbeEmail({ apiKey, from, toList }) {
   });
 }
 
+function formatBundleEmail(bundle, opts) {
+  const sections = [];
+
+  sections.push(`Stale data (no row in last ${opts.staleAfterMinutes} min per physical_group):`);
+  if (bundle.stale.length === 0) {
+    sections.push("  (none)");
+  } else {
+    for (const v of bundle.stale) {
+      sections.push(`  - ${v.physical_group}: latest ${iso(v.latest_ts)}`);
+    }
+  }
+
+  sections.push("");
+  sections.push(
+    `Hydro out (< ${opts.hydroMinKw} kW if last reading within last ${opts.hydroRecentMinutes} min):`,
+  );
+  if (bundle.hydro == null || bundle.hydro.record_ts == null) {
+    sections.push("  (no hydro_plant power_instantaneous kW row)");
+  } else if (!bundle.hydro.fire && bundle.hydro.reason === "reading_not_recent") {
+    sections.push(
+      `  Latest ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)} — too old for hydro-out rule (use stale section).`,
+    );
+  } else if (bundle.hydro.fire) {
+    sections.push(
+      `  ALERT: ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
+    );
+  } else {
+    sections.push(
+      `  OK: ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
+    );
+  }
+
+  sections.push("");
+  sections.push(
+    "Water sampling due (45-day window, backlog floor 30 days past) — matches Grafana water-reporting-alert-count.sql:",
+  );
+  if (bundle.water.skipped) {
+    sections.push("  (water_sampling_schedule not present — skipped)");
+  } else if (bundle.water.count === 0) {
+    sections.push("  (no rows in due window)");
+  } else {
+    sections.push(`  ALERT: ${bundle.water.count} row(s) due or overdue in window`);
+  }
+
+  sections.push("");
+  sections.push(
+    `Low/high alarm rows (last ${opts.alarmLookbackMinutes} min, max ${opts.alarmRowLimit} shown):`,
+  );
+  if (bundle.alarms.length === 0) {
+    sections.push("  (none)");
+  } else {
+    for (const r of bundle.alarms) {
+      const flags = [r.low_alarm ? "LOW" : null, r.high_alarm ? "HIGH" : null]
+        .filter(Boolean)
+        .join("+");
+      sections.push(
+        `  - ${r.physical_group} ${r.serial} ${r.metric_key} ${flags} @ ${iso(r.record_ts)}`,
+      );
+    }
+  }
+
+  sections.push("");
+  sections.push(
+    `Repository / run: ${process.env.GITHUB_REPOSITORY ?? "local"} ${process.env.GITHUB_RUN_ID ?? ""}`,
+  );
+
+  const text = sections.join("\n");
+  const firing = bundleHasFire(bundle);
+  const subject = firing
+    ? `[AcquiSuite] Operations alert — issues detected`
+    : `[AcquiSuite] Operations check — all clear`;
+  const html = `<pre style="font-family:system-ui,sans-serif">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
+  return { subject, text, html };
+}
+
 async function main() {
   const dryRun = process.env.NOTIFY_DRY_RUN === "1" || process.env.NOTIFY_DRY_RUN === "true";
   const staleAfterMinutes = envInt("ALERT_STALE_AFTER_MINUTES", 240);
   const cooldownMinutes = envInt("ALERT_COOLDOWN_MINUTES", 360);
+  const hydroRecentMinutes = envInt("ALERT_HYDRO_RECENT_MINUTES", 60);
+  const hydroMinKw = envFloat("ALERT_HYDRO_MIN_KW", 5);
+  const alarmLookbackMinutes = envInt("ALERT_ALARM_LOOKBACK_MINUTES", 240);
+  const alarmRowLimit = envInt("ALERT_ALARM_ROW_LIMIT", 40);
 
   const toList = parseRecipientList(process.env.ALERT_EMAIL_TO);
   const from = process.env.ALERT_EMAIL_FROM?.trim();
@@ -205,16 +407,27 @@ async function main() {
     process.exit(1);
   }
 
+  const bundleOpts = {
+    staleAfterMinutes,
+    hydroRecentMinutes,
+    hydroMinKw,
+    alarmLookbackMinutes,
+    alarmRowLimit,
+  };
+
   const pool = createDbPoolFromEnv();
   const client = await pool.connect();
   try {
-    const violations = await collectViolations(client, staleAfterMinutes);
-    if (violations.length === 0) {
+    const bundle = await collectBundle(client, bundleOpts);
+    const payload = buildBundlePayload(bundle);
+    const firing = bundleHasFire(bundle);
+
+    if (!firing) {
       console.log(
-        `[notify-email-alerts] OK: no stale physical_group (threshold ${staleAfterMinutes} min per group).`,
+        `[notify-email-alerts] OK: no stale groups, hydro OK, no water due rows, no alarm rows in ${alarmLookbackMinutes}m window.`,
       );
       console.log(
-        "[notify-email-alerts] Resend: no API call — nothing to alert (inbox will be empty in Resend too).",
+        "[notify-email-alerts] Resend: no API call — nothing to alert (inbox empty in Resend).",
       );
       if (envTruthy("NOTIFY_SEND_TEST") && !dryRun) {
         const out = await sendTestProbeEmail({ apiKey, from, toList });
@@ -229,40 +442,18 @@ async function main() {
       return;
     }
 
-    const payload = stablePayload(violations);
     const send = await shouldSendAfterDedupe(client, payload, cooldownMinutes);
     if (!send) {
       console.log(
-        `[notify-email-alerts] Skip: same stale snapshot within cooldown (${cooldownMinutes} min).`,
+        `[notify-email-alerts] Skip: same bundle snapshot within cooldown (${cooldownMinutes} min).`,
       );
       console.log(
-        "[notify-email-alerts] Resend: no API call (dedupe — you already got this alert recently).",
+        "[notify-email-alerts] Resend: no API call (dedupe).",
       );
       return;
     }
 
-    const lines = violations
-      .map((v) => {
-        const ts =
-          v.latest_ts == null
-            ? "(none)"
-            : typeof v.latest_ts === "string"
-              ? v.latest_ts
-              : v.latest_ts.toISOString();
-        return `- ${v.physical_group}: latest record_ts ${ts}`;
-      })
-      .join("\n");
-
-    const subject = `[AcquiSuite] Utility data stale — ${violations.length} group(s)`;
-    const text = [
-      `Freshness check failed: latest row per physical_group is older than ${staleAfterMinutes} minutes.`,
-      "",
-      lines,
-      "",
-      `Repository / run: ${process.env.GITHUB_REPOSITORY ?? "local"} ${process.env.GITHUB_RUN_ID ?? ""}`,
-    ].join("\n");
-
-    const html = `<pre style="font-family:system-ui,sans-serif">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
+    const { subject, text, html } = formatBundleEmail(bundle, bundleOpts);
 
     if (dryRun) {
       console.log("[dry-run] would send:\n", text);
@@ -279,7 +470,7 @@ async function main() {
     });
     await recordSent(client, payload);
     console.log(
-      `[notify-email-alerts] Sent stale-data alert to ${toList.length} recipient(s). Resend id: ${resendOut?.id ?? "n/a"}`,
+      `[notify-email-alerts] Sent bundle alert to ${toList.length} recipient(s). Resend id: ${resendOut?.id ?? "n/a"}`,
     );
   } finally {
     client.release();

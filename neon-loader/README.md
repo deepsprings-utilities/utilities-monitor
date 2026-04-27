@@ -66,11 +66,11 @@ Each device entry should include:
 
 ### Email alerts (Neon → Resend)
 
-Portable freshness checks independent of Grafana: [`.github/workflows/neon-email-alerts.yml`](../.github/workflows/neon-email-alerts.yml) runs on a schedule (hourly UTC), runs `npm run migrate` (includes `alert_notification_state` for dedupe), then `npm run notify:email-alerts`. The script flags each `physical_group` whose latest `record_ts` in `utility_measurement_tall` is older than the threshold (or empty table).
+Portable ops checks aligned with [Grafana alert queries](grafana/alerts/) (see `manifest.yaml`): [`.github/workflows/neon-email-alerts.yml`](../.github/workflows/neon-email-alerts.yml) runs on a schedule (hourly UTC), runs `npm run migrate` (includes `alert_notification_state` for dedupe), then `npm run notify:email-alerts`. One email can include: **stale data** per `physical_group` (default no row newer than **4 hours**), **Hydro Out** (latest hydro `power_instantaneous` kW **&lt; 5** only if reading is within the last hour — same SQL idea as `hydro-out-alert.sql`), **water sampling due** (same window as `water-reporting-alert-count.sql`), and **low_alarm / high_alarm** rows in the last **4 hours** (sample capped).
 
 **Actions secrets:** `NEON_DATABASE_URL`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM` (verified domain in Resend), `ALERT_EMAIL_TO` (comma-separated addresses).
 
-**Optional repository Variables:** `ALERT_STALE_AFTER_MINUTES` (default `240`), `ALERT_COOLDOWN_MINUTES` (default `360`). Optional env `NOTIFY_DRY_RUN=1` skips Resend (still queries Neon).
+**Optional repository Variables:** `ALERT_STALE_AFTER_MINUTES` (default `240` = 4h), `ALERT_COOLDOWN_MINUTES` (default `360`), `ALERT_HYDRO_MIN_KW` (default `5`), `ALERT_HYDRO_RECENT_MINUTES` (default `60`, readings older than this skip the hydro-out rule), `ALERT_ALARM_LOOKBACK_MINUTES` (default `240`), `ALERT_ALARM_ROW_LIMIT` (default `40`). Optional env `NOTIFY_DRY_RUN=1` skips Resend (still queries Neon).
 
 **Why Resend shows no emails when the workflow is green:** the job only calls Resend when it **sends** an alert (stale data) or a **manual probe** (below). If all `physical_group` values are fresh, the run succeeds but **Resend is never called** — check the job log for `Resend: no API call`. **One-shot test:** add a secret `NOTIFY_SEND_TEST` = `1`, run **Actions → Neon email alerts → Run workflow** once, confirm the probe in Resend and your inbox, then **delete** the secret (or clear it) so you do not send a test every hour.
 
