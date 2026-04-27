@@ -22,6 +22,8 @@ jobs:
       ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
       ALERT_STALE_AFTER_MINUTES: ${{ vars.ALERT_STALE_AFTER_MINUTES }}
       ALERT_COOLDOWN_MINUTES: ${{ vars.ALERT_COOLDOWN_MINUTES }}
+      # Set to 1 for one manual run to send a test email via Resend (remove after).
+      NOTIFY_SEND_TEST: ${{ secrets.NOTIFY_SEND_TEST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

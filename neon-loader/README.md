@@ -72,6 +72,8 @@ Portable freshness checks independent of Grafana: [`.github/workflows/neon-email
 
 **Optional repository Variables:** `ALERT_STALE_AFTER_MINUTES` (default `240`), `ALERT_COOLDOWN_MINUTES` (default `360`). Optional env `NOTIFY_DRY_RUN=1` skips Resend (still queries Neon).
 
+**Why Resend shows no emails when the workflow is green:** the job only calls Resend when it **sends** an alert (stale data) or a **manual probe** (below). If all `physical_group` values are fresh, the run succeeds but **Resend is never called** — check the job log for `Resend: no API call`. **One-shot test:** add a secret `NOTIFY_SEND_TEST` = `1`, run **Actions → Neon email alerts → Run workflow** once, confirm the probe in Resend and your inbox, then **delete** the secret (or clear it) so you do not send a test every hour.
+
 **Setup checklist (DNS + Resend + GitHub)**
 
 1. **Resend account** — Sign up at [resend.com](https://resend.com), open **API Keys**, create a key (store it temporarily; you will paste it into GitHub).

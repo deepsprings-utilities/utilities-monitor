@@ -36,6 +36,12 @@ function envInt(name, defaultValue) {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : defaultValue;
 }
 
+/** For NOTIFY_SEND_TEST one-shot probe (GitHub Secret = 1 during a manual run). */
+function envTruthy(name) {
+  const v = process.env[name];
+  return v === "1" || v === "true" || v === "yes";
+}
+
 /**
  * @param {{ physical_group: string, latest_ts: Date | string | null }[]} violations
  */
@@ -151,6 +157,32 @@ async function sendResendEmail({ apiKey, from, toList, subject, html, text }) {
   return json;
 }
 
+/** One message to verify Resend + DNS; does not touch alert_notification_state. */
+async function sendTestProbeEmail({ apiKey, from, toList }) {
+  const run = process.env.GITHUB_RUN_ID ?? "";
+  const repo = process.env.GITHUB_REPOSITORY ?? "";
+  const text = [
+    "This is a manual NOTIFY_SEND_TEST probe from the Neon email alerts job.",
+    "",
+    `Time (UTC): ${new Date().toISOString()}`,
+    repo ? `Repo: ${repo}` : "",
+    run ? `Run: ${run}` : "",
+    "",
+    "Remove the NOTIFY_SEND_TEST secret (or set it empty) after you confirm delivery.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const html = `<pre style="font-family:system-ui,sans-serif">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
+  return sendResendEmail({
+    apiKey,
+    from,
+    toList,
+    subject: "[AcquiSuite] Email alerts probe (manual test)",
+    html,
+    text,
+  });
+}
+
 async function main() {
   const dryRun = process.env.NOTIFY_DRY_RUN === "1" || process.env.NOTIFY_DRY_RUN === "true";
   const staleAfterMinutes = envInt("ALERT_STALE_AFTER_MINUTES", 240);
@@ -179,8 +211,21 @@ async function main() {
     const violations = await collectViolations(client, staleAfterMinutes);
     if (violations.length === 0) {
       console.log(
-        `OK: no stale physical_group (threshold ${staleAfterMinutes} min per group).`,
+        `[notify-email-alerts] OK: no stale physical_group (threshold ${staleAfterMinutes} min per group).`,
       );
+      console.log(
+        "[notify-email-alerts] Resend: no API call — nothing to alert (inbox will be empty in Resend too).",
+      );
+      if (envTruthy("NOTIFY_SEND_TEST") && !dryRun) {
+        const out = await sendTestProbeEmail({ apiKey, from, toList });
+        console.log(
+          `[notify-email-alerts] NOTIFY_SEND_TEST: sent probe. Resend id: ${out?.id ?? "(see response)"}`,
+        );
+      } else if (envTruthy("NOTIFY_SEND_TEST") && dryRun) {
+        console.log(
+          "[notify-email-alerts] NOTIFY_SEND_TEST set but NOTIFY_DRY_RUN — no email sent.",
+        );
+      }
       return;
     }
 
@@ -188,7 +233,10 @@ async function main() {
     const send = await shouldSendAfterDedupe(client, payload, cooldownMinutes);
     if (!send) {
       console.log(
-        `Skip: same stale snapshot within cooldown (${cooldownMinutes} min).`,
+        `[notify-email-alerts] Skip: same stale snapshot within cooldown (${cooldownMinutes} min).`,
+      );
+      console.log(
+        "[notify-email-alerts] Resend: no API call (dedupe — you already got this alert recently).",
       );
       return;
     }
@@ -221,7 +269,7 @@ async function main() {
       return;
     }
 
-    await sendResendEmail({
+    const resendOut = await sendResendEmail({
       apiKey,
       from,
       toList,
@@ -230,7 +278,9 @@ async function main() {
       text,
     });
     await recordSent(client, payload);
-    console.log(`Sent alert to ${toList.length} recipient(s).`);
+    console.log(
+      `[notify-email-alerts] Sent stale-data alert to ${toList.length} recipient(s). Resend id: ${resendOut?.id ?? "n/a"}`,
+    );
   } finally {
     client.release();
     await pool.end();
