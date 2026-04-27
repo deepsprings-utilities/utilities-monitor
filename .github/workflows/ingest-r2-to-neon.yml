@@ -2,7 +2,8 @@ name: Ingest R2 to Neon
 
 on:
   schedule:
-    - cron: "15 * * * *"
+    # Every 2 hours at :15 UTC (GitHub cron is UTC; was hourly to reduce Neon CPU).
+    - cron: "15 */2 * * *"
   workflow_dispatch:
 
 jobs:
