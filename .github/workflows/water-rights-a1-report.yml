@@ -42,18 +42,7 @@ jobs:
       - name: Generate workbook
         run: npm run generate
 
-      - name: Upload to Google Drive
-        if: ${{ vars.WATER_RIGHTS_GOOGLE_DRIVE_FOLDER_ID != '' }}
-        env:
-          GOOGLE_DRIVE_FOLDER_ID: ${{ vars.WATER_RIGHTS_GOOGLE_DRIVE_FOLDER_ID }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.WATER_RIGHTS_GOOGLE_SERVICE_ACCOUNT_JSON }}
-        run: |
-          set -euo pipefail
-          OUT="$(ls -1 dist/*.xlsx | head -1)"
-          export UPLOAD_FILE="$OUT"
-          export UPLOAD_NAME="$(basename "$OUT")"
-          npm run upload-drive
-
+     
       - name: Upload to Dropbox
         if: ${{ vars.WATER_RIGHTS_USE_DROPBOX == 'true' }}
         env:
