@@ -2,8 +2,9 @@
 /**
  * Fills Template A1 (Diversion to Direct Use) from Neon: Wyman Creek flow at hydro (mb-006 / hydro_flex_v1).
  *
- * Instantaneous flow is stored as metric_key `flow_C` (F2 - Wyman Creek Flow (Gpm)).
- * Optional: WATER_RIGHTS_SERIAL to pin one AcquiSuite serial if multiple rows exist.
+ * Wyman Creek GPM in Neon uses metric_key `flow_wyman_avg` (see neon-loader label-map / HUD).
+ * Override with WATER_RIGHTS_FLOW_METRIC if your tall table uses another key (legacy `flow_C`).
+ * Optional: WATER_RIGHTS_SERIAL or WATER_RIGHTS_DEVICE_ADDRESS to narrow rows.
  *
  * Env:
  *   NEON_DATABASE_URL (required)
@@ -11,7 +12,8 @@
  *   REPORT_END — inclusive end date YYYY-MM-DD in REPORT_TZ (default: yesterday)
  *   REPORT_TZ — IANA tz for DATE/TIME columns (default: America/Los_Angeles)
  *   WATER_RIGHTS_SERIAL — optional device serial filter
- *   WATER_RIGHTS_FLOW_METRIC — default flow_C
+ *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg
+ *   WATER_RIGHTS_DEVICE_ADDRESS — optional e.g. mb-006
  *   FLOW_RATE_UNIT_TEXT — default "GALLONS PER MINUTE"
  *   VOLUME_UNIT_TEXT — default "GALLONS"
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
@@ -71,7 +73,7 @@ function formatLocalDateTime(isoTs, tz) {
   return { dateStr, timeStr };
 }
 
-async function loadRows(client, { year, endInclusiveYmd, serial, metricKey, tz }) {
+async function loadRows(client, { year, endInclusiveYmd, serial, deviceAddress, metricKey, tz }) {
   const startYmd = `${year}-01-01`;
   const {
     rows: [bounds],
@@ -88,7 +90,7 @@ async function loadRows(client, { year, endInclusiveYmd, serial, metricKey, tz }
   let q = `
     SELECT record_ts, metric_value, serial
     FROM public.utility_measurement_tall
-    WHERE physical_group = 'hydro_plant'
+    WHERE (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
       AND metric_key = $3
       AND unit = 'Gpm'
       AND record_ts >= $1::timestamptz
@@ -97,6 +99,10 @@ async function loadRows(client, { year, endInclusiveYmd, serial, metricKey, tz }
   if (serial) {
     params.push(serial);
     q += ` AND serial = $${params.length}`;
+  }
+  if (deviceAddress) {
+    params.push(deviceAddress);
+    q += ` AND device_address = $${params.length}`;
   }
   q += ` ORDER BY record_ts ASC`;
 
@@ -144,7 +150,8 @@ async function main() {
     throw new Error(`Invalid REPORT_END: ${endInclusive} (expected YYYY-MM-DD)`);
   }
   const serial = env("WATER_RIGHTS_SERIAL");
-  const metricKey = env("WATER_RIGHTS_FLOW_METRIC", "flow_C");
+  const deviceAddress = env("WATER_RIGHTS_DEVICE_ADDRESS");
+  const metricKey = env("WATER_RIGHTS_FLOW_METRIC", "flow_wyman_avg");
   const flowUnit = env("FLOW_RATE_UNIT_TEXT", "GALLONS PER MINUTE");
   const volUnit = env("VOLUME_UNIT_TEXT", "GALLONS");
   const beneficial = env("BENEFICIAL_USE");
@@ -164,9 +171,25 @@ async function main() {
       year,
       endInclusiveYmd: endInclusive,
       serial: serial || null,
+      deviceAddress: deviceAddress || null,
       metricKey,
       tz,
     });
+
+    if (rows.length === 0) {
+      console.warn(
+        JSON.stringify({
+          warn: "no_rows",
+          hint:
+            "Check WATER_RIGHTS_FLOW_METRIC (default flow_wyman_avg), REPORT_YEAR/REPORT_END range, WATER_RIGHTS_SERIAL/device_address filters, and that Neon has hydro_plant Gpm rows for this period.",
+          year,
+          endInclusive,
+          metricKey,
+          serial: serial || null,
+          deviceAddress: deviceAddress || null,
+        }),
+      );
+    }
 
     const gallons = incrementalGallons(rows, startUtc);
 
@@ -212,6 +235,7 @@ async function main() {
           endInclusive,
           metricKey,
           serial: serial || null,
+          deviceAddress: deviceAddress || null,
         },
         null,
         2,

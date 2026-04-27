@@ -15,7 +15,8 @@ This package **builds a filled “Template A1” (diversion to direct use) workb
 
 - **Node 20+**
 - **`NEON_DATABASE_URL`** (required for `generate`)
-- Optional: **`WATER_RIGHTS_SERIAL`** to pin one AcquiSuite device when many rows exist; **`REPORT_YEAR`**, **`REPORT_END`**, **`REPORT_TZ`**, and other static columns (see top-of-file comment in `generate-a1-report.mjs`).
+- Flow rows must match tall table reality: default metric is **`flow_wyman_avg`** (Wyman Creek on mb-006 per ingest / Grafana). If your export used **`flow_C`**, set Variable **`WATER_RIGHTS_FLOW_METRIC`** accordingly.
+- Optional: **`WATER_RIGHTS_SERIAL`** or **`WATER_RIGHTS_DEVICE_ADDRESS`** (e.g. `mb-006`); **`REPORT_YEAR`**, **`REPORT_END`**, **`REPORT_TZ`**, and static columns (see `generate-a1-report.mjs`).
 
 ## Local run
 
