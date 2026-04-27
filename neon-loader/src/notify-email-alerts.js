@@ -71,7 +71,8 @@ export function buildBundlePayload(bundle) {
       bundle.hydro.value != null && Number.isFinite(Number(bundle.hydro.value))
         ? Number(bundle.hydro.value).toFixed(2)
         : "";
-    hydroPart = `${bundle.hydro.fire ? "1" : "0"}|${v}`;
+    const mk = bundle.hydro.metric_key ?? "";
+    hydroPart = `${bundle.hydro.fire ? "1" : "0"}|${v}|${mk}`;
   }
   const waterPart = `${bundle.water.skipped ? "skip" : "ok"}|${bundle.water.count}`;
   const alarmLines = bundle.alarms
@@ -127,13 +128,14 @@ async function collectStaleGroups(client, staleAfterMinutes) {
  * @param {import('pg').PoolClient} client
  */
 async function evaluateHydroOut(client, recentMinutes, minKw) {
+  /** Match Grafana HUD / hydro-power (source_system OR physical_group, LIKE for metric). */
   const { rows } = await client.query(
     `
-    SELECT metric_value, record_ts
+    SELECT metric_value, record_ts, metric_key
     FROM utility_measurement_tall
-    WHERE physical_group = 'hydro_plant'
-      AND metric_key = 'power_instantaneous'
+    WHERE (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
       AND unit = 'kW'
+      AND metric_key LIKE 'power_instantaneous%'
     ORDER BY record_ts DESC
     LIMIT 1
     `,
@@ -144,14 +146,28 @@ async function evaluateHydroOut(client, recentMinutes, minKw) {
   }
   const ts = row.record_ts instanceof Date ? row.record_ts : new Date(row.record_ts);
   const ageMs = Date.now() - ts.getTime();
+  const ageMinutes = Math.round(ageMs / 60_000);
   const recent =
     ageMs <= recentMinutes * 60 * 1000 && ageMs >= -120_000;
   const value = Number(row.metric_value);
   if (!recent) {
-    return { fire: false, value, record_ts: ts, reason: "reading_not_recent" };
+    return {
+      fire: false,
+      value,
+      record_ts: ts,
+      metric_key: row.metric_key,
+      reason: "reading_not_recent",
+      ageMinutes,
+    };
   }
   const fire = Number.isFinite(value) && value < minKw;
-  return { fire, value, record_ts: ts };
+  return {
+    fire,
+    value,
+    record_ts: ts,
+    metric_key: row.metric_key,
+    ageMinutes,
+  };
 }
 
 /**
@@ -228,6 +244,7 @@ async function collectBundle(client, opts) {
  * @param {import('pg').PoolClient} client
  * @param {string} payload
  * @param {number} cooldownMinutes
+ * @returns {Promise<{ allow: boolean; reason?: string; lastSentAt?: Date }>}
  */
 async function shouldSendAfterDedupe(client, payload, cooldownMinutes) {
   const { rows } = await client.query(
@@ -235,12 +252,18 @@ async function shouldSendAfterDedupe(client, payload, cooldownMinutes) {
     [ALERT_KEY],
   );
   const row = rows[0];
-  if (!row) return true;
+  if (!row) return { allow: true };
   const samePayload = row.last_payload === payload;
   const cooldownMs = cooldownMinutes * 60 * 1000;
   const last = new Date(row.last_sent_at).getTime();
-  if (samePayload && Date.now() - last < cooldownMs) return false;
-  return true;
+  if (samePayload && Date.now() - last < cooldownMs) {
+    return {
+      allow: false,
+      reason: "cooldown_same_bundle_payload",
+      lastSentAt: row.last_sent_at,
+    };
+  }
+  return { allow: true };
 }
 
 async function recordSent(client, payload) {
@@ -323,18 +346,20 @@ function formatBundleEmail(bundle, opts) {
     `Hydro out (< ${opts.hydroMinKw} kW if last reading within last ${opts.hydroRecentMinutes} min):`,
   );
   if (bundle.hydro == null || bundle.hydro.record_ts == null) {
-    sections.push("  (no hydro_plant power_instantaneous kW row)");
+    sections.push(
+      "  (no hydro row: hydro_plant + kW + metric_key like power_instantaneous%)",
+    );
   } else if (!bundle.hydro.fire && bundle.hydro.reason === "reading_not_recent") {
     sections.push(
-      `  Latest ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)} — too old for hydro-out rule (use stale section).`,
+      `  Latest ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW (${bundle.hydro.ageMinutes ?? "?"} min ago) — too old for hydro-out rule (see stale section).`,
     );
   } else if (bundle.hydro.fire) {
     sections.push(
-      `  ALERT: ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
+      `  ALERT: ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
     );
   } else {
     sections.push(
-      `  OK: ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
+      `  OK: ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
     );
   }
 
@@ -381,6 +406,36 @@ function formatBundleEmail(bundle, opts) {
   return { subject, text, html };
 }
 
+function logSnapshot(bundle, opts, firing) {
+  const h = bundle.hydro;
+  console.log(
+    JSON.stringify({
+      tag: "notify-email-alerts-snapshot",
+      firing,
+      staleGroupCount: bundle.stale.length,
+      staleGroups: bundle.stale.map((s) => s.physical_group),
+      hydro: h
+        ? {
+            fire: Boolean(h.fire),
+            kw: h.value,
+            metric_key: h.metric_key ?? null,
+            ageMinutes: h.ageMinutes ?? null,
+            reason: h.reason ?? null,
+          }
+        : { found: false },
+      waterDueCount: bundle.water.count,
+      waterSkipped: bundle.water.skipped,
+      alarmRowCount: bundle.alarms.length,
+      thresholds: {
+        staleAfterMinutes: opts.staleAfterMinutes,
+        hydroMinKw: opts.hydroMinKw,
+        hydroRecentMinutes: opts.hydroRecentMinutes,
+        alarmLookbackMinutes: opts.alarmLookbackMinutes,
+      },
+    }),
+  );
+}
+
 async function main() {
   const dryRun = process.env.NOTIFY_DRY_RUN === "1" || process.env.NOTIFY_DRY_RUN === "true";
   const staleAfterMinutes = envInt("ALERT_STALE_AFTER_MINUTES", 240);
@@ -421,6 +476,7 @@ async function main() {
     const bundle = await collectBundle(client, bundleOpts);
     const payload = buildBundlePayload(bundle);
     const firing = bundleHasFire(bundle);
+    logSnapshot(bundle, bundleOpts, firing);
 
     if (!firing) {
       console.log(
@@ -442,15 +498,30 @@ async function main() {
       return;
     }
 
-    const send = await shouldSendAfterDedupe(client, payload, cooldownMinutes);
-    if (!send) {
+    const dedupe = envTruthy("NOTIFY_FORCE_SEND")
+      ? { allow: true }
+      : await shouldSendAfterDedupe(client, payload, cooldownMinutes);
+    if (!dedupe.allow) {
       console.log(
-        `[notify-email-alerts] Skip: same bundle snapshot within cooldown (${cooldownMinutes} min).`,
+        JSON.stringify({
+          tag: "notify-email-alerts-dedupe",
+          reason: dedupe.reason,
+          lastSentAt: dedupe.lastSentAt,
+          cooldownMinutes,
+          hint:
+            "Resend was not called. Same alert bundle was already emailed within cooldown. Delete NOTIFY_FORCE_SEND after one test send, or DELETE FROM alert_notification_state WHERE alert_key = 'email_ops_bundle_v1' in Neon, or wait.",
+        }),
       );
       console.log(
-        "[notify-email-alerts] Resend: no API call (dedupe).",
+        `[notify-email-alerts] Skip: cooldown (${cooldownMinutes} min) — Resend unchanged.`,
       );
       return;
+    }
+
+    if (envTruthy("NOTIFY_FORCE_SEND")) {
+      console.log(
+        "[notify-email-alerts] NOTIFY_FORCE_SEND — dedupe bypassed for this run.",
+      );
     }
 
     const { subject, text, html } = formatBundleEmail(bundle, bundleOpts);

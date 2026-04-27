@@ -28,6 +28,8 @@ jobs:
       ALERT_ALARM_ROW_LIMIT: ${{ vars.ALERT_ALARM_ROW_LIMIT }}
       # Set to 1 for one manual run to send a test email via Resend (remove after).
       NOTIFY_SEND_TEST: ${{ secrets.NOTIFY_SEND_TEST }}
+      # Set to 1 once to bypass cooldown if firing=true but dedupe blocked (remove after).
+      NOTIFY_FORCE_SEND: ${{ secrets.NOTIFY_FORCE_SEND }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
