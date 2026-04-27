@@ -23,6 +23,8 @@
  *   VOLUME_UNIT_TEXT — default "GALLONS"
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
+ *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
+ *   SKIP_FLOW_SUMMARY_PDF — if `1` or `true`, skip PDF (Excel only)
  */
 
 import fs from "node:fs";
@@ -31,6 +33,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import pg from "pg";
+import { computeFlowIntervals } from "./flow-math.mjs";
+import { writeFlowSummaryPdf } from "./pdf-flow-summary.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -172,29 +176,6 @@ function applyFlowScale(rows, scale) {
   }));
 }
 
-function incrementalGallons(rows, startUtc) {
-  const out = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    const t = new Date(rows[i].record_ts).getTime();
-    const f = rows[i].metric_value;
-    let dtMin;
-    let fPrev;
-    if (i === 0) {
-      dtMin = (t - startUtc.getTime()) / 60000;
-      fPrev = f;
-    } else {
-      const tPrev = new Date(rows[i - 1].record_ts).getTime();
-      dtMin = (t - tPrev) / 60000;
-      fPrev = rows[i - 1].metric_value;
-    }
-    if (dtMin < 0) continue;
-    const avgGpm = i === 0 ? f : (f + fPrev) / 2;
-    const gallons = avgGpm * dtMin;
-    out.push(Number.isFinite(gallons) ? gallons : 0);
-  }
-  return out;
-}
-
 async function main() {
   const databaseUrl = process.env.NEON_DATABASE_URL;
   if (!databaseUrl || !String(databaseUrl).trim()) {
@@ -278,7 +259,7 @@ async function main() {
       await logFlowDiagnostics(pool, startUtc, tEndExclusive, streamRaw);
     }
 
-    const gallons = incrementalGallons(rows, startUtc);
+    const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
@@ -316,12 +297,39 @@ async function main() {
       );
 
     await workbook.xlsx.writeFile(outPath);
+
+    const skipPdf = /^1|true|yes$/i.test(env("SKIP_FLOW_SUMMARY_PDF", ""));
+    let summaryPdfPath = "";
+
+    if (!skipPdf) {
+      const streamLabel =
+        streamRaw === "booster" ? "Booster pump (F3)" : "Wyman Creek (hydro)";
+      const defaultPdf = path.join(
+        dist,
+        `Flow-summary-${fileSlug}-${year}-asof-${endInclusive}.pdf`,
+      );
+      summaryPdfPath = env("OUT_SUMMARY_PDF_PATH") || defaultPdf;
+      await writeFlowSummaryPdf({
+        outPath: summaryPdfPath,
+        streamLabel,
+        year,
+        endInclusiveYmd: endInclusive,
+        tz,
+        metricKey,
+        flowScale,
+        rows,
+        gallons,
+        dtMinutes,
+      });
+    }
+
     console.log(
       JSON.stringify(
         {
           ok: true,
           rowsWritten: rows.length,
           outPath,
+          summaryPdfPath: summaryPdfPath || null,
           stream: streamRaw,
           year,
           endInclusive,

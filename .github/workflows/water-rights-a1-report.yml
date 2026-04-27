@@ -56,10 +56,13 @@ jobs:
           DROPBOX_DEST_FOLDER: ${{ vars.WATER_RIGHTS_DROPBOX_DEST_FOLDER || '' }}
         run: |
           set -euo pipefail
-          OUT="$(ls -1 dist/*.xlsx | head -1)"
-          export UPLOAD_FILE="$OUT"
-          export UPLOAD_NAME="$(basename "$OUT")"
-          npm run upload-dropbox
+          shopt -s nullglob
+          for f in dist/Template-A1-*.xlsx dist/Flow-summary-*.pdf; do
+            [[ -f "$f" ]] || continue
+            export UPLOAD_FILE="$f"
+            export UPLOAD_NAME="$(basename "$f")"
+            npm run upload-dropbox
+          done
 
   a1-booster-report:
     runs-on: ubuntu-latest
@@ -108,7 +111,10 @@ jobs:
           DROPBOX_DEST_FOLDER: ${{ vars.BOOSTER_DROPBOX_DEST_FOLDER || '' }}
         run: |
           set -euo pipefail
-          OUT="$(ls -1 dist/*.xlsx | head -1)"
-          export UPLOAD_FILE="$OUT"
-          export UPLOAD_NAME="$(basename "$OUT")"
-          npm run upload-dropbox
+          shopt -s nullglob
+          for f in dist/Template-A1-*.xlsx dist/Flow-summary-*.pdf; do
+            [[ -f "$f" ]] || continue
+            export UPLOAD_FILE="$f"
+            export UPLOAD_NAME="$(basename "$f")"
+            npm run upload-dropbox
+          done
