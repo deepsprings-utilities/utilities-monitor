@@ -66,11 +66,11 @@ Each device entry should include:
 
 ### Email alerts (Neon → Resend)
 
-Portable ops checks aligned with [Grafana alert queries](grafana/alerts/) (see `manifest.yaml`): [`.github/workflows/neon-email-alerts.yml`](../.github/workflows/neon-email-alerts.yml) runs on a schedule (hourly UTC), runs `npm run migrate` (includes `alert_notification_state` for dedupe), then `npm run notify:email-alerts`. One email can include: **stale data** per `physical_group` (default no row newer than **4 hours**), **Hydro Out** (latest hydro `power_instantaneous` kW **&lt; 5** only if reading is within the last hour — same SQL idea as `hydro-out-alert.sql`), **water sampling due** (same window as `water-reporting-alert-count.sql`), and **low_alarm / high_alarm** rows in the last **4 hours** (sample capped).
+Portable ops checks aligned with [Grafana alert queries](grafana/alerts/) (see `manifest.yaml`): [`.github/workflows/neon-email-alerts.yml`](../.github/workflows/neon-email-alerts.yml) runs on a schedule (hourly UTC), runs `npm run migrate` (includes `alert_notification_state` for dedupe), then `npm run notify:email-alerts`. When something fires, **the email lists only those checks** (no “OK” sections for rules that did not trigger). Supported checks: **stale data** per `physical_group` (default no row newer than **4 hours**), **Hydro Out** (hydro kW **&lt; threshold** only if reading is recent — same idea as `hydro-out-alert.sql`), **water sampling due** (same window as `water-reporting-alert-count.sql`), **low_alarm / high_alarm** rows (lookback capped).
 
-**Actions secrets:** `NEON_DATABASE_URL`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM` (verified domain in Resend), `ALERT_EMAIL_TO` (comma-separated addresses).
+**Actions Secrets:** `NEON_DATABASE_URL`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM` (verified sender in Resend).
 
-**Optional repository Variables:** `ALERT_STALE_AFTER_MINUTES` (default `240` = 4h), `ALERT_COOLDOWN_MINUTES` (default `360`), `ALERT_HYDRO_MIN_KW` (default `5`), `ALERT_HYDRO_RECENT_MINUTES` (default `60`, readings older than this skip the hydro-out rule), `ALERT_ALARM_LOOKBACK_MINUTES` (default `240`), `ALERT_ALARM_ROW_LIMIT` (default `40`). Optional env `NOTIFY_DRY_RUN=1` skips Resend (still queries Neon).
+**Repository Variables:** `ALERT_EMAIL_TO` (**comma-separated recipients** — stored as a Variable so you can edit without Secrets). Optional: `ALERT_STALE_AFTER_MINUTES` (default `240` = 4h), `ALERT_COOLDOWN_MINUTES` (default `360`), `ALERT_HYDRO_MIN_KW`, `ALERT_HYDRO_RECENT_MINUTES`, `ALERT_ALARM_LOOKBACK_MINUTES`, `ALERT_ALARM_ROW_LIMIT`. Optional env `NOTIFY_DRY_RUN=1` skips Resend (still queries Neon).
 
 **Why Resend shows no emails when the workflow is green:** (1) **Nothing is firing** — open the job log and find the JSON line `notify-email-alerts-snapshot`: `firing` should be `true` for Resend to be eligible. If `hydro.found` is false, check that Neon has rows with `source_system` or `physical_group` = `hydro_plant`, `unit` = `kW`, and `metric_key` like `power_instantaneous%` (the notifier matches Grafana HUD, not only exact `power_instantaneous`). (2) **Cooldown** — if `firing` is true but you see `notify-email-alerts-dedupe`, the same bundle was already emailed within `ALERT_COOLDOWN_MINUTES`. One-shot: add secret `NOTIFY_FORCE_SEND` = `1`, run workflow once, remove secret; or delete that row in `alert_notification_state`. (3) **Probe only:** secret `NOTIFY_SEND_TEST` = `1` sends a test when nothing fires — remove after testing.
 
@@ -80,14 +80,13 @@ Portable ops checks aligned with [Grafana alert queries](grafana/alerts/) (see `
 2. **Add your domain in Resend** — Domains → **Add domain** → enter the apex or subdomain you control (e.g. `example.com` or `mail.example.com`). Resend shows **DNS records** (usually DKIM CNAMEs and SPF/TXT). You do **not** need mailboxes or MX for sending only—just add those records at your DNS host (same place you manage A/CNAME today).
 3. **Wait for verification** — In Resend, wait until the domain shows **verified** (DNS can take a few minutes to a few hours).
 4. **Pick a From address** — Any address on that verified domain works, e.g. `alerts@example.com` (no inbox required). Put exactly that string in GitHub as `ALERT_EMAIL_FROM`.
-5. **Recipients** — Put one or more real inboxes in `ALERT_EMAIL_TO` (comma-separated). Personal Gmail/iCloud is fine here.
-6. **GitHub secrets** (repository **Settings → Secrets and variables → Actions → Secrets**):  
-   - `NEON_DATABASE_URL` — same connection string as ingest (Neon dashboard → connection string).  
-   - `RESEND_API_KEY` — the key from step 1.  
-   - `ALERT_EMAIL_FROM` — e.g. `alerts@example.com`.  
-   - `ALERT_EMAIL_TO` — e.g. `you@gmail.com` or `a@x.com,b@y.com`.
-7. **Optional Variables** ( **Settings → Secrets and variables → Actions → Variables** ): `ALERT_STALE_AFTER_MINUTES`, `ALERT_COOLDOWN_MINUTES` if you want non-default thresholds.
+5. **Recipients** — Under **Actions → Variables**, add `ALERT_EMAIL_TO` with comma-separated inboxes (e.g. `you@gmail.com` or `a@x.com,b@y.com`). Variables are editable without re-entering a secret.
+6. **GitHub Secrets** (**Settings → Secrets and variables → Actions → Secrets**):  
+   - `NEON_DATABASE_URL`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM`.
+7. **Optional Variables** (same tab → **Variables**): threshold tuning (`ALERT_STALE_AFTER_MINUTES`, etc.) if you want non-defaults.
 8. **Merge the workflow** to your default branch so the schedule runs. Test anytime: **Actions → Neon email alerts → Run workflow**.
+
+If you previously used **`ALERT_EMAIL_TO` as a Secret**, delete that secret and recreate the addresses under **Variables** so the workflow picks them up.
 
 ## Local Run
 

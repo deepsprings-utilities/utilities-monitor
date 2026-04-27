@@ -19,7 +19,8 @@ jobs:
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+      # Recipients (comma-separated): repository Variable — easier to edit than Secrets.
+      ALERT_EMAIL_TO: ${{ vars.ALERT_EMAIL_TO }}
       ALERT_STALE_AFTER_MINUTES: ${{ vars.ALERT_STALE_AFTER_MINUTES }}
       ALERT_COOLDOWN_MINUTES: ${{ vars.ALERT_COOLDOWN_MINUTES }}
       ALERT_HYDRO_MIN_KW: ${{ vars.ALERT_HYDRO_MIN_KW }}

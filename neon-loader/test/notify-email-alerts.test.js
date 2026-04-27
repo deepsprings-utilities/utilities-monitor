@@ -1,10 +1,20 @@
 import assert from "node:assert";
 import test from "node:test";
 import {
+  buildAlertSubject,
   buildBundlePayload,
   bundleHasFire,
+  firingSectionLabels,
   parseRecipientList,
 } from "../src/notify-email-alerts.js";
+
+const testOpts = {
+  staleAfterMinutes: 240,
+  hydroMinKw: 5,
+  hydroRecentMinutes: 60,
+  alarmLookbackMinutes: 240,
+  alarmRowLimit: 40,
+};
 
 test("parseRecipientList empty", () => {
   assert.deepStrictEqual(parseRecipientList(""), []);
@@ -52,6 +62,33 @@ test("buildBundlePayload ignores alarm record_ts for dedupe stability", () => {
     ],
   };
   assert.strictEqual(buildBundlePayload(a), buildBundlePayload(b));
+});
+
+test("buildAlertSubject lists only firing sections", () => {
+  assert.strictEqual(
+    buildAlertSubject(
+      {
+        stale: [{ physical_group: "solar_field", latest_ts: new Date() }],
+        hydro: null,
+        water: { count: 0, skipped: false },
+        alarms: [],
+      },
+      testOpts,
+    ),
+    "[AcquiSuite] Alert: stale data",
+  );
+  assert.strictEqual(
+    firingSectionLabels(
+      {
+        stale: [],
+        hydro: { fire: true, value: 2, record_ts: new Date() },
+        water: { count: 2, skipped: false },
+        alarms: [],
+      },
+      testOpts,
+    ).join(","),
+    "hydro < 5 kW,water sampling due",
+  );
 });
 
 test("bundleHasFire", () => {

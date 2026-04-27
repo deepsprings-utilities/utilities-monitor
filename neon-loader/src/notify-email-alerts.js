@@ -329,59 +329,61 @@ async function sendTestProbeEmail({ apiKey, from, toList }) {
   });
 }
 
+/** Which alert types are firing (same logic as bundleHasFire parts). Exported for tests. */
+export function firingSectionLabels(bundle, opts) {
+  const labels = [];
+  if (bundle.stale.length > 0) labels.push("stale data");
+  if (bundle.hydro?.fire) labels.push(`hydro < ${opts.hydroMinKw} kW`);
+  if (!bundle.water.skipped && bundle.water.count > 0)
+    labels.push("water sampling due");
+  if (bundle.alarms.length > 0) labels.push("alarm flags");
+  return labels;
+}
+
+/** Subject line listing only firing checks. Caller must ensure bundleHasFire(bundle). */
+export function buildAlertSubject(bundle, opts) {
+  const labels = firingSectionLabels(bundle, opts);
+  const joined =
+    labels.length > 0 ? labels.join(" · ") : "operations alert";
+  return `[AcquiSuite] Alert: ${joined}`;
+}
+
+/** Email body lists only sections that fired (no “OK” filler). */
 function formatBundleEmail(bundle, opts) {
   const sections = [];
 
-  sections.push(`Stale data (no row in last ${opts.staleAfterMinutes} min per physical_group):`);
-  if (bundle.stale.length === 0) {
-    sections.push("  (none)");
-  } else {
+  if (bundle.stale.length > 0) {
+    sections.push(
+      `Stale data (no row in last ${opts.staleAfterMinutes} min per physical_group):`,
+    );
     for (const v of bundle.stale) {
       sections.push(`  - ${v.physical_group}: latest ${iso(v.latest_ts)}`);
     }
+    sections.push("");
   }
 
-  sections.push("");
-  sections.push(
-    `Hydro out (< ${opts.hydroMinKw} kW if last reading within last ${opts.hydroRecentMinutes} min):`,
-  );
-  if (bundle.hydro == null || bundle.hydro.record_ts == null) {
+  if (bundle.hydro?.fire) {
     sections.push(
-      "  (no hydro row: hydro_plant + kW + metric_key like power_instantaneous%)",
+      `Hydro out (< ${opts.hydroMinKw} kW, reading within last ${opts.hydroRecentMinutes} min):`,
     );
-  } else if (!bundle.hydro.fire && bundle.hydro.reason === "reading_not_recent") {
     sections.push(
-      `  Latest ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW (${bundle.hydro.ageMinutes ?? "?"} min ago) — too old for hydro-out rule (see stale section).`,
+      `  ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW @ ${iso(bundle.hydro.record_ts)}`,
     );
-  } else if (bundle.hydro.fire) {
-    sections.push(
-      `  ALERT: ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
-    );
-  } else {
-    sections.push(
-      `  OK: ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW at ${iso(bundle.hydro.record_ts)}`,
-    );
+    sections.push("");
   }
 
-  sections.push("");
-  sections.push(
-    "Water sampling due (45-day window, backlog floor 30 days past) — matches Grafana water-reporting-alert-count.sql:",
-  );
-  if (bundle.water.skipped) {
-    sections.push("  (water_sampling_schedule not present — skipped)");
-  } else if (bundle.water.count === 0) {
-    sections.push("  (no rows in due window)");
-  } else {
-    sections.push(`  ALERT: ${bundle.water.count} row(s) due or overdue in window`);
+  if (!bundle.water.skipped && bundle.water.count > 0) {
+    sections.push(
+      "Water sampling due (45-day window, backlog floor 30 days past):",
+    );
+    sections.push(`  ${bundle.water.count} row(s) in window`);
+    sections.push("");
   }
 
-  sections.push("");
-  sections.push(
-    `Low/high alarm rows (last ${opts.alarmLookbackMinutes} min, max ${opts.alarmRowLimit} shown):`,
-  );
-  if (bundle.alarms.length === 0) {
-    sections.push("  (none)");
-  } else {
+  if (bundle.alarms.length > 0) {
+    sections.push(
+      `Low/high alarm rows (last ${opts.alarmLookbackMinutes} min, up to ${opts.alarmRowLimit} shown):`,
+    );
     for (const r of bundle.alarms) {
       const flags = [r.low_alarm ? "LOW" : null, r.high_alarm ? "HIGH" : null]
         .filter(Boolean)
@@ -390,18 +392,15 @@ function formatBundleEmail(bundle, opts) {
         `  - ${r.physical_group} ${r.serial} ${r.metric_key} ${flags} @ ${iso(r.record_ts)}`,
       );
     }
+    sections.push("");
   }
 
-  sections.push("");
   sections.push(
     `Repository / run: ${process.env.GITHUB_REPOSITORY ?? "local"} ${process.env.GITHUB_RUN_ID ?? ""}`,
   );
 
-  const text = sections.join("\n");
-  const firing = bundleHasFire(bundle);
-  const subject = firing
-    ? `[AcquiSuite] Operations alert — issues detected`
-    : `[AcquiSuite] Operations check — all clear`;
+  const text = sections.join("\n").trimEnd();
+  const subject = buildAlertSubject(bundle, opts);
   const html = `<pre style="font-family:system-ui,sans-serif">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
   return { subject, text, html };
 }
