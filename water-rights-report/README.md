@@ -3,7 +3,7 @@
 This package **builds a filled “Template A1” (diversion to direct use) workbook** from flow GPM in **Neon** using the same Excel template. Two **streams** are supported:
 
 - **Wyman** (`REPORT_FLOW_STREAM=wyman`, default): `hydro_plant` + `flow_wyman_avg` (mb-006 Wyman Creek).
-- **Booster** (`REPORT_FLOW_STREAM=booster`): `booster_pump` + `flow_avg` (mb-003 F3 booster, per Grafana HUD).
+- **Booster** (`REPORT_FLOW_STREAM=booster`): mb-003 flow columns `flow_avg_A` and `flow_avg` (same instant → `flow_avg_A` wins), plus legacy rows still tagged `hydro_plant` on mb-003 when the device filter matches.
 
 It is **separate** from AcquiSuite HTTP ingest (`worker/`) and R2→Neon (`neon-loader/`), but **reads the same database** the loader populates.
 

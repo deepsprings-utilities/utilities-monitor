@@ -4,7 +4,7 @@
  *
  * REPORT_FLOW_STREAM:
  *   - `wyman` (default): hydro_plant + metric `flow_wyman_avg` (Wyman / mb-006).
- *   - `booster`: booster_pump + metric `flow_avg` (F3 booster / mb-003 per Grafana HUD).
+ *   - `booster`: booster_pump + metrics `flow_avg_A` / `flow_avg` (mb-003; Grafana prefers A at same timestamp).
  *
  * Override metric/device with WATER_RIGHTS_FLOW_METRIC / WATER_RIGHTS_DEVICE_ADDRESS.
  *
@@ -15,7 +15,7 @@
  *   REPORT_TZ — IANA tz for DATE/TIME columns (default: America/Los_Angeles)
  *   WATER_RIGHTS_SERIAL — optional device serial filter
  *   REPORT_FLOW_STREAM — `wyman` | `booster` (default wyman)
- *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg (wyman) or flow_avg (booster)
+ *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg (wyman) or flow_avg (booster; loads flow_avg_A+flow_avg)
  *   WATER_RIGHTS_DEVICE_ADDRESS — optional; booster defaults to mb-003 if unset
  *   WATER_RIGHTS_FLOW_SCALE — multiply Neon GPM before report math + cells (default 1 local;
  *     GitHub workflow defaults to 4 when Variable unset — set to 1 to disable)
@@ -82,11 +82,44 @@ function formatLocalDateTime(isoTs, tz) {
   return { dateStr, timeStr };
 }
 
-function plantClause(stream) {
+/**
+ * Booster on mb-003 is sometimes still tagged hydro in tall (see neon-loader backfill SQL).
+ * When a device filter is set, allow hydro + flow_avg* rows on that device so the report
+ * matches Grafana device-scoped queries.
+ */
+function plantClause(stream, deviceAddress) {
   if (stream === "booster") {
+    if (deviceAddress) {
+      return `(
+        (physical_group = 'booster_pump' OR source_system = 'booster_pump')
+        OR (
+          (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
+          AND metric_key LIKE 'flow_avg%'
+        )
+      )`;
+    }
     return `(physical_group = 'booster_pump' OR source_system = 'booster_pump')`;
   }
   return `(physical_group = 'hydro_plant' OR source_system = 'hydro_plant')`;
+}
+
+/**
+ * Grafana HUD uses flow_avg_A and flow_avg on mb-003; default `flow_avg` here means both,
+ * with DISTINCT ON preferring flow_avg_A when timestamps collide (matches HUD ordering).
+ */
+function boosterMetricPlan(metricKey) {
+  if (metricKey === "flow_avg") {
+    return {
+      keys: ["flow_avg_A", "flow_avg"],
+      useDistinctOn: true,
+      label: "flow_avg_A / flow_avg",
+    };
+  }
+  return {
+    keys: [metricKey],
+    useDistinctOn: false,
+    label: metricKey,
+  };
 }
 
 async function loadRows(
@@ -105,14 +138,48 @@ async function loadRows(
   const tStart = bounds.t_start;
   const tEndEx = bounds.t_end_exclusive;
 
-  const params = [tStart, tEndEx, metricKey];
-  const plant = plantClause(stream);
+  const plant = plantClause(stream, deviceAddress || null);
+  const boosterPlan =
+    stream === "booster" ? boosterMetricPlan(metricKey) : null;
+  const params =
+    boosterPlan && boosterPlan.useDistinctOn
+      ? [tStart, tEndEx, boosterPlan.keys]
+      : [tStart, tEndEx, metricKey];
+
+  const metricSql =
+    boosterPlan && boosterPlan.useDistinctOn
+      ? `metric_key = ANY($3::text[])`
+      : `metric_key = $3`;
+
+  const orderTail =
+    boosterPlan && boosterPlan.useDistinctOn
+      ? `ORDER BY record_ts ASC,
+          CASE metric_key
+            WHEN 'flow_avg_A' THEN 1
+            WHEN 'flow_avg' THEN 2
+            ELSE 3
+          END ASC`
+      : `ORDER BY record_ts ASC`;
+
+  const selectList =
+    boosterPlan && boosterPlan.useDistinctOn
+      ? `SELECT DISTINCT ON (record_ts)
+      record_ts,
+      metric_value,
+      serial`
+      : `SELECT record_ts, metric_value, serial`;
+
+  const unitIsGpm =
+    stream === "booster"
+      ? `(COALESCE(TRIM(lower(unit)), '') LIKE '%gpm%' OR COALESCE(TRIM(unit), '') = '')`
+      : `COALESCE(TRIM(lower(unit)), '') LIKE '%gpm%'`;
+
   let q = `
-    SELECT record_ts, metric_value, serial
+    ${selectList}
     FROM public.utility_measurement_tall
     WHERE ${plant}
-      AND metric_key = $3
-      AND COALESCE(TRIM(lower(unit)), '') LIKE '%gpm%'
+      AND ${metricSql}
+      AND ${unitIsGpm}
       AND record_ts >= $1::timestamptz
       AND record_ts < $2::timestamptz
   `;
@@ -124,7 +191,7 @@ async function loadRows(
     params.push(deviceAddress);
     q += ` AND device_address = $${params.length}`;
   }
-  q += ` ORDER BY record_ts ASC`;
+  q += ` ${orderTail}`;
 
   const { rows } = await client.query(q, params);
   return {
@@ -136,8 +203,8 @@ async function loadRows(
 }
 
 /** When main query returns zero rows — log metric_key/unit/device in range (GitHub log). */
-async function logFlowDiagnostics(client, tStart, tEndExclusive, stream) {
-  const plant = plantClause(stream);
+async function logFlowDiagnostics(client, tStart, tEndExclusive, stream, deviceAddress) {
+  const plant = plantClause(stream, deviceAddress || null);
   const { rows } = await client.query(
     `
     SELECT metric_key,
@@ -207,6 +274,10 @@ async function main() {
   const metricDefault =
     streamRaw === "booster" ? "flow_avg" : "flow_wyman_avg";
   const metricKey = env("WATER_RIGHTS_FLOW_METRIC", metricDefault);
+  const metricReportLabel =
+    streamRaw === "booster"
+      ? boosterMetricPlan(metricKey).label
+      : metricKey;
   const flowScaleRaw = env("WATER_RIGHTS_FLOW_SCALE", "1");
   const flowScale = Number(flowScaleRaw);
   if (!Number.isFinite(flowScale) || flowScale <= 0) {
@@ -256,7 +327,13 @@ async function main() {
           deviceAddress: deviceAddress || null,
         }),
       );
-      await logFlowDiagnostics(pool, startUtc, tEndExclusive, streamRaw);
+      await logFlowDiagnostics(
+        pool,
+        startUtc,
+        tEndExclusive,
+        streamRaw,
+        deviceAddress || null,
+      );
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
@@ -315,7 +392,7 @@ async function main() {
         year,
         endInclusiveYmd: endInclusive,
         tz,
-        metricKey,
+        metricKey: metricReportLabel,
         flowScale,
         rows,
         gallons,
@@ -334,6 +411,7 @@ async function main() {
           year,
           endInclusive,
           metricKey,
+          metricLabel: metricReportLabel,
           flowScale,
           serial: serial || null,
           deviceAddress: deviceAddress || null,
