@@ -64,6 +64,29 @@ Each device entry should include:
   - `STRICT_SCHEMA=1` (optional: only allow columns listed under `schemas` in `label-map.json`; default is **off** so parsing matches the legacy “all meter columns” behavior)
   - `INSERT_BATCH_ROWS` (default: `250`) — how many `ingest_raw_record` / `utility_measurement_tall` rows to send per `INSERT` (higher = fewer DB round-trips; cap 5000 to stay under Postgres parameter limits)
 
+### Email alerts (Neon → Resend)
+
+Portable freshness checks independent of Grafana: [`.github/workflows/neon-email-alerts.yml`](../.github/workflows/neon-email-alerts.yml) runs on a schedule (hourly UTC), runs `npm run migrate` (includes `alert_notification_state` for dedupe), then `npm run notify:email-alerts`. The script flags each `physical_group` whose latest `record_ts` in `utility_measurement_tall` is older than the threshold (or empty table).
+
+**Actions secrets:** `NEON_DATABASE_URL`, `RESEND_API_KEY`, `ALERT_EMAIL_FROM` (verified domain in Resend), `ALERT_EMAIL_TO` (comma-separated addresses).
+
+**Optional repository Variables:** `ALERT_STALE_AFTER_MINUTES` (default `240`), `ALERT_COOLDOWN_MINUTES` (default `360`). Optional env `NOTIFY_DRY_RUN=1` skips Resend (still queries Neon).
+
+**Setup checklist (DNS + Resend + GitHub)**
+
+1. **Resend account** — Sign up at [resend.com](https://resend.com), open **API Keys**, create a key (store it temporarily; you will paste it into GitHub).
+2. **Add your domain in Resend** — Domains → **Add domain** → enter the apex or subdomain you control (e.g. `example.com` or `mail.example.com`). Resend shows **DNS records** (usually DKIM CNAMEs and SPF/TXT). You do **not** need mailboxes or MX for sending only—just add those records at your DNS host (same place you manage A/CNAME today).
+3. **Wait for verification** — In Resend, wait until the domain shows **verified** (DNS can take a few minutes to a few hours).
+4. **Pick a From address** — Any address on that verified domain works, e.g. `alerts@example.com` (no inbox required). Put exactly that string in GitHub as `ALERT_EMAIL_FROM`.
+5. **Recipients** — Put one or more real inboxes in `ALERT_EMAIL_TO` (comma-separated). Personal Gmail/iCloud is fine here.
+6. **GitHub secrets** (repository **Settings → Secrets and variables → Actions → Secrets**):  
+   - `NEON_DATABASE_URL` — same connection string as ingest (Neon dashboard → connection string).  
+   - `RESEND_API_KEY` — the key from step 1.  
+   - `ALERT_EMAIL_FROM` — e.g. `alerts@example.com`.  
+   - `ALERT_EMAIL_TO` — e.g. `you@gmail.com` or `a@x.com,b@y.com`.
+7. **Optional Variables** ( **Settings → Secrets and variables → Actions → Variables** ): `ALERT_STALE_AFTER_MINUTES`, `ALERT_COOLDOWN_MINUTES` if you want non-default thresholds.
+8. **Merge the workflow** to your default branch so the schedule runs. Test anytime: **Actions → Neon email alerts → Run workflow**.
+
 ## Local Run
 
 ```bash

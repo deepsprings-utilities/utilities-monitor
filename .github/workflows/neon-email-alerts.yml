@@ -1,0 +1,43 @@
+name: Neon email alerts
+
+# Portable freshness alerts: Neon SQL → Resend (does not depend on Grafana alerting).
+on:
+  schedule:
+    # Hourly at :35 UTC (adjust if you prefer alignment with ingest).
+    - cron: "35 * * * *"
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: neon-loader
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
+      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+      ALERT_STALE_AFTER_MINUTES: ${{ vars.ALERT_STALE_AFTER_MINUTES }}
+      ALERT_COOLDOWN_MINUTES: ${{ vars.ALERT_COOLDOWN_MINUTES }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: neon-loader/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migrations
+        run: npm run migrate
+
+      - name: Notify (Resend)
+        run: npm run notify:email-alerts

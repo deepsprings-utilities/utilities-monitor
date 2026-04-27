@@ -10,6 +10,7 @@
     "reset:ingest": "node scripts/reset-ingest.mjs --yes",
     "reingest:from-scratch": "node scripts/reset-ingest.mjs --yes --ingest",
     "migrate": "node src/migrate.js",
+    "notify:email-alerts": "node src/notify-email-alerts.js",
     "test": "node --test test/*.test.js",
     "grafana:push": "node scripts/push-grafana-dashboard.mjs",
     "grafana:push:water": "node scripts/push-grafana-dashboard.mjs --dashboard grafana/dashboard.water-compliance.json",
