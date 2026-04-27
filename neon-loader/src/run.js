@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
-import { isProcessed, markProcessed } from "./checkpoint.js";
+import { checkpointPairKey, fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
 import { parseGzipLog } from "./parse.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
@@ -26,13 +26,19 @@ async function main() {
   const bucket = mustGetEnv("R2_BUCKET_NAME");
   const prefix = process.env.INGEST_PREFIX || "log-gz/";
   const maxKeys = Number(process.env.INGEST_BATCH_LIMIT || "200");
+  const listScanCap = Number(process.env.INGEST_LIST_SCAN_CAP || "");
   const dryRun = process.env.DRY_RUN === "1";
 
   const r2 = createR2ClientFromEnv();
   const db = createDbPoolFromEnv();
   const labelMapConfig = await loadLabelMap();
 
-  const objects = await listR2Objects(r2, { bucket, prefix, maxKeys });
+  const objects = await listR2Objects(r2, {
+    bucket,
+    prefix,
+    maxKeys,
+    ...(Number.isFinite(listScanCap) && listScanCap > 0 ? { listScanCap } : {}),
+  });
   const stats = {
     listed: objects.length,
     skipped: 0,
@@ -40,8 +46,14 @@ async function main() {
     failed: 0,
   };
   console.log(
-    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} listed=${objects.length} dry_run=${dryRun}`,
+    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${objects.length} dry_run=${dryRun}`,
   );
+
+  const checkpointPairs = objects.map((o) => ({
+    r2Key: o.key,
+    etag: o.etag || "no_etag",
+  }));
+  const processedSet = await fetchProcessedPairSet(db, checkpointPairs);
 
   for (const object of objects) {
     const etag = object.etag || "no_etag";
@@ -50,8 +62,7 @@ async function main() {
     const serial = serialFromKey(object.key);
 
     try {
-      const skip = await withTransaction(db, (client) => isProcessed(client, object.key, etag));
-      if (skip) {
+      if (processedSet.has(checkpointPairKey(object.key, etag))) {
         stats.skipped += 1;
         continue;
       }
@@ -150,6 +161,16 @@ async function main() {
   console.log(
     `run_complete run_id=${runId} listed=${stats.listed} skipped=${stats.skipped} succeeded=${stats.succeeded} failed=${stats.failed}`,
   );
+  if (
+    stats.listed > 0 &&
+    stats.skipped === stats.listed &&
+    stats.succeeded === 0 &&
+    stats.failed === 0
+  ) {
+    console.warn(
+      `warning run_complete all_objects_skipped listed=${stats.listed} (every key already in ingest_checkpoint; no new inserts this run)`,
+    );
+  }
 }
 
 function serialFromKey(r2Key) {
