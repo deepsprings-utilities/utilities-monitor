@@ -92,7 +92,7 @@ async function loadRows(client, { year, endInclusiveYmd, serial, deviceAddress, 
     FROM public.utility_measurement_tall
     WHERE (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
       AND metric_key = $3
-      AND unit = 'Gpm'
+      AND COALESCE(TRIM(lower(unit)), '') LIKE '%gpm%'
       AND record_ts >= $1::timestamptz
       AND record_ts < $2::timestamptz
   `;
@@ -107,7 +107,43 @@ async function loadRows(client, { year, endInclusiveYmd, serial, deviceAddress, 
   q += ` ORDER BY record_ts ASC`;
 
   const { rows } = await client.query(q, params);
-  return { rows, startUtc: new Date(tStart) };
+  return {
+    rows,
+    startUtc: new Date(tStart),
+    /** @type {Date} */
+    tEndExclusive: new Date(tEndEx),
+  };
+}
+
+/** When main query returns zero rows — log what hydro flow keys actually exist in range (GitHub log). */
+async function logHydroFlowDiagnostics(client, tStart, tEndExclusive) {
+  const { rows } = await client.query(
+    `
+    SELECT metric_key,
+           COALESCE(unit, '') AS unit,
+           COALESCE(device_address, '') AS device_address,
+           COUNT(*)::bigint AS n
+    FROM public.utility_measurement_tall
+    WHERE (physical_group = 'hydro_plant' OR source_system = 'hydro_plant')
+      AND record_ts >= $1::timestamptz
+      AND record_ts < $2::timestamptz
+    GROUP BY metric_key, unit, device_address
+    ORDER BY n DESC
+    LIMIT 40
+    `,
+    [tStart, tEndExclusive],
+  );
+  console.warn(
+    JSON.stringify(
+      {
+        warn: "hydro_flow_metric_keys_in_date_range",
+        hint: "Pick metric_key (+ unit if needed) for WATER_RIGHTS_FLOW_METRIC / filters.",
+        samples: rows,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 function incrementalGallons(rows, startUtc) {
@@ -167,7 +203,7 @@ async function main() {
 
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
-    const { rows, startUtc } = await loadRows(pool, {
+    const { rows, startUtc, tEndExclusive } = await loadRows(pool, {
       year,
       endInclusiveYmd: endInclusive,
       serial: serial || null,
@@ -179,9 +215,9 @@ async function main() {
     if (rows.length === 0) {
       console.warn(
         JSON.stringify({
-          warn: "no_rows",
+          warn: "no_rows_after_filters",
           hint:
-            "Check WATER_RIGHTS_FLOW_METRIC (default flow_wyman_avg), REPORT_YEAR/REPORT_END range, WATER_RIGHTS_SERIAL/device_address filters, and that Neon has hydro_plant Gpm rows for this period.",
+            "Match WATER_RIGHTS_FLOW_METRIC (+ unit containing gpm, case-insensitive now) and date range; clear SERIAL/device if unsure.",
           year,
           endInclusive,
           metricKey,
@@ -189,6 +225,7 @@ async function main() {
           deviceAddress: deviceAddress || null,
         }),
       );
+      await logHydroFlowDiagnostics(pool, startUtc, tEndExclusive);
     }
 
     const gallons = incrementalGallons(rows, startUtc);
