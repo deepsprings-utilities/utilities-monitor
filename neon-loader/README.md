@@ -108,6 +108,8 @@ npm run grafana:dry-run
 npm run grafana:push:water -- --dry-run
 ```
 
+**Alert rules** (Postgres queries, rule UIDs, receivers) are documented under [`grafana/alerts/`](grafana/alerts/) for review in git; Grafana Cloud remains the source of truth.
+
 ## Database Objects
 
 Migrations create:

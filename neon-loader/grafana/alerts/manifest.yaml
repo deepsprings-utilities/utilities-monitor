@@ -1,0 +1,40 @@
+# Grafana Cloud alert rules — documentation mirror (source of truth is Grafana).
+# Update Grafana first, then sync SQL snippets here when queries change.
+#
+# Instance: Deep Springs Utilities Grafana Cloud (org-specific UIDs).
+
+alerts:
+  - rule_uid: dfjzp1szlpzb4d
+    title: Due within 45 days (backlog capped at 30d past)
+    folder_uid: f2zj77
+    rule_group: water reporting
+    evaluate_for: 4h
+    receiver: Google Chat Utilities Space
+    query_files:
+      - queries/water-reporting-alert-count.sql
+    dashboard_uid: water-compliance-schedule
+    notes:
+      - Ignores next_due_date older than 30 days (reduces spam from stale backlog).
+
+  - rule_uid: bfjzr4dmq2mf4f
+    title: Hydro Out
+    folder_uid: bfjzp27m8bbpcc
+    rule_group: Utilities Ops
+    evaluate_for: 1h
+    receiver: Google Chat Utilities Space
+    query_files:
+      - queries/hydro-out-alert.sql
+    dashboard_uid: utilities-ops-overview
+    threshold_kw: 5
+
+  - rule_uid: ffjt1vsgpmigwb
+    title: Hydro Output Below 10 kW
+    folder_uid: ffjsihh29goaod
+    rule_group: Utilities
+    evaluate_for: 15m
+    receiver: lucinda-phone
+    query_files:
+      - queries/hydro-output-below-10kw-alert.sql
+    dashboard_uid: defqscp
+    notes:
+      - Legacy rule; verify datasource UID matches Neon Postgres in Grafana.
