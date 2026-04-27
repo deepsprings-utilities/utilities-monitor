@@ -52,6 +52,37 @@ function envTruthy(name) {
   return v === "1" || v === "true" || v === "yes";
 }
 
+/** GitHub Actions annotation (shows in job summary when viewed in GitHub UI). */
+function ghNotice(message) {
+  const m = String(message)
+    .replace(/%/g, "%25")
+    .replace(/\r/g, "%0D")
+    .replace(/\n/g, "%0A");
+  console.log(`::notice title=neon-email-alerts::${m}`);
+}
+
+/**
+ * Single-line grep target for Actions logs (also emits a notice annotation).
+ * @param {Record<string, string | number | boolean>} [extra]
+ */
+function logSummaryLine(bundle, firing, extra = {}) {
+  const parts = [
+    "NOTIFY_EMAIL_ALERTS_SUMMARY",
+    `firing=${firing}`,
+    `stale=${bundle.stale.length}`,
+    `hydroFire=${Boolean(bundle.hydro?.fire)}`,
+    `waterDue=${bundle.water.count}`,
+    `waterSkipped=${bundle.water.skipped}`,
+    `alarms=${bundle.alarms.length}`,
+  ];
+  for (const [k, v] of Object.entries(extra)) {
+    parts.push(`${k}=${v}`);
+  }
+  const line = parts.join(" ");
+  console.log(line);
+  ghNotice(line);
+}
+
 function iso(ts) {
   if (ts == null) return "null";
   return typeof ts === "string" ? ts : ts.toISOString();
@@ -433,6 +464,7 @@ function logSnapshot(bundle, opts, firing) {
       },
     }),
   );
+  logSummaryLine(bundle, firing, { step: "after_queries" });
 }
 
 async function main() {
