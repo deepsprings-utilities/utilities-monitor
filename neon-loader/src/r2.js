@@ -23,7 +23,7 @@ const LIST_PAGE_MAX = 1000;
  *
  * @param {object} opts
  * @param {number} [opts.maxKeys] — how many keys to return (process per run); default 200
- * @param {number} [opts.listScanCap] — max keys to list before sort+slice; default from INGEST_LIST_SCAN_CAP or 10000
+ * @param {number} [opts.listScanCap] — max keys to list before sort+slice; default from INGEST_LIST_SCAN_CAP or 250000
  */
 export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanCap }) {
   const processLimit = Number(maxKeys);
@@ -34,7 +34,7 @@ export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanC
   const scanCandidate = Number.isFinite(scanArg) && scanArg > 0 ? scanArg : scanEnv;
   const scanCap = Math.max(
     processCap,
-    Number.isFinite(scanCandidate) && scanCandidate > 0 ? scanCandidate : 10000,
+    Number.isFinite(scanCandidate) && scanCandidate > 0 ? scanCandidate : 250000,
   );
 
   const accum = [];
@@ -72,9 +72,12 @@ export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanC
   }
 
   if (accum.length >= scanCap && lastResp?.IsTruncated) {
-    console.warn(
-      `list_r2_objects_warning prefix=${prefix} scan_cap=${scanCap} objects_collected=${accum.length} r2_list_truncated=true hint=raise_INGEST_LIST_SCAN_CAP_if_new_objects_sort_after_this_many_keys`,
-    );
+    const message = `list_r2_objects_truncated prefix=${prefix} scan_cap=${scanCap} objects_collected=${accum.length} r2_list_truncated=true hint=raise_INGEST_LIST_SCAN_CAP`;
+    if (process.env.FAIL_ON_TRUNCATED_LIST === "0") {
+      console.warn(`${message} fail_on_truncated_list=false`);
+    } else {
+      throw new Error(`${message} fail_on_truncated_list=true`);
+    }
   }
 
   accum.sort((a, b) => {
