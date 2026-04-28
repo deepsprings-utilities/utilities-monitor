@@ -18,24 +18,31 @@ const LIST_PAGE_MAX = 1000;
 
 /**
  * Lists objects under prefix, prioritizing **newest LastModified first** before applying
- * `maxKeys`. R2/S3 returns keys in **lexicographic key order**; without this, each run could
- * see the same first N keys (all already checkpointed) and never reach newer uploads.
+ * `maxKeys`. R2/S3 returns keys in **lexicographic key order**, so the default path scans the
+ * whole prefix before sorting; otherwise later-sorting fresh uploads can sit outside the scan
+ * window forever.
  *
  * @param {object} opts
  * @param {number} [opts.maxKeys] — how many keys to return (process per run); default 200
- * @param {number} [opts.listScanCap] — max keys to list before sort+slice; default from INGEST_LIST_SCAN_CAP or 10000
+ * @param {number} [opts.listScanCap] — optional max keys to list before sort+slice
  */
 export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanCap }) {
   const processLimit = Number(maxKeys);
   const processCap = Number.isFinite(processLimit) && processLimit > 0 ? processLimit : 200;
 
-  const scanEnv = Number(process.env.INGEST_LIST_SCAN_CAP ?? "");
+  const scanEnvRaw = process.env.INGEST_LIST_SCAN_CAP;
+  const scanEnv =
+    scanEnvRaw !== undefined && scanEnvRaw !== "" ? Number(scanEnvRaw) : NaN;
   const scanArg = listScanCap !== undefined ? Number(listScanCap) : NaN;
-  const scanCandidate = Number.isFinite(scanArg) && scanArg > 0 ? scanArg : scanEnv;
-  const scanCap = Math.max(
-    processCap,
-    Number.isFinite(scanCandidate) && scanCandidate > 0 ? scanCandidate : 10000,
-  );
+  const scanCandidate =
+    Number.isFinite(scanArg) && scanArg > 0
+      ? scanArg
+      : Number.isFinite(scanEnv) && scanEnv > 0
+        ? scanEnv
+        : Infinity;
+  const scanCap = Number.isFinite(scanCandidate)
+    ? Math.max(processCap, scanCandidate)
+    : Infinity;
 
   const accum = [];
   let continuationToken;
@@ -43,7 +50,9 @@ export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanC
   let lastResp;
 
   while (true) {
-    const remaining = scanCap - accum.length;
+    const remaining = Number.isFinite(scanCap)
+      ? scanCap - accum.length
+      : LIST_PAGE_MAX;
     if (remaining <= 0) break;
 
     const command = new ListObjectsV2Command({
@@ -65,13 +74,13 @@ export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanC
       });
       if (accum.length >= scanCap) break;
     }
-    if (accum.length >= scanCap) break;
+    if (Number.isFinite(scanCap) && accum.length >= scanCap) break;
     if (!resp.IsTruncated) break;
     continuationToken = resp.NextContinuationToken;
     if (!continuationToken) break;
   }
 
-  if (accum.length >= scanCap && lastResp?.IsTruncated) {
+  if (Number.isFinite(scanCap) && accum.length >= scanCap && lastResp?.IsTruncated) {
     console.warn(
       `list_r2_objects_warning prefix=${prefix} scan_cap=${scanCap} objects_collected=${accum.length} r2_list_truncated=true hint=raise_INGEST_LIST_SCAN_CAP_if_new_objects_sort_after_this_many_keys`,
     );
