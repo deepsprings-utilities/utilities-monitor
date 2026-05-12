@@ -9,7 +9,7 @@ import PDFDocument from "pdfkit";
 
 export const US_GALLONS_PER_ACRE_FOOT = 325851;
 
-/** YYYY-MM for instant in tz (calendar month bucket for interval end timestamp). */
+/** YYYY-MM for instant in tz. */
 export function yearMonthInTz(isoTs, tz) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
@@ -19,6 +19,44 @@ export function yearMonthInTz(isoTs, tz) {
   const y = parts.find((p) => p.type === "year").value;
   const mo = parts.find((p) => p.type === "month").value;
   return `${y}-${mo}`;
+}
+
+function dateTimePartsInTz(instant, tz) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(instant));
+  return Object.fromEntries(
+    parts
+      .filter((p) => p.type !== "literal")
+      .map((p) => [p.type, Number(p.value)]),
+  );
+}
+
+function timeZoneOffsetMs(instant, tz) {
+  const p = dateTimePartsInTz(instant, tz);
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return asUtc - new Date(instant).getTime();
+}
+
+function localDateTimeToUtc({ year, month, day, hour = 0, minute = 0, second = 0 }, tz) {
+  const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  let utc = localAsUtc - timeZoneOffsetMs(localAsUtc, tz);
+  utc = localAsUtc - timeZoneOffsetMs(utc, tz);
+  return new Date(utc);
+}
+
+function nextMonthStartUtc(instant, tz) {
+  const p = dateTimePartsInTz(instant, tz);
+  const nextMonth = p.month === 12 ? 1 : p.month + 1;
+  const nextYear = p.month === 12 ? p.year + 1 : p.year;
+  return localDateTimeToUtc({ year: nextYear, month: nextMonth, day: 1 }, tz);
 }
 
 /** Months from start month through end month inclusive (cross-year safe). */
@@ -40,17 +78,46 @@ export function enumerateMonths(firstYmd, lastYmd) {
 }
 
 /**
- * Sum gallons and minutes per calendar month (interval attributed to row `record_ts` month in tz).
+ * Sum gallons and minutes per calendar month, splitting intervals that cross
+ * local month boundaries.
  */
-export function aggregateMonthly(rows, gallons, dtMinutes, tz) {
+export function aggregateMonthly(rows, gallons, dtMinutes, tz, startUtc) {
   /** @type {Map<string, { gallons: number; minutes: number }>} */
   const map = new Map();
   for (let i = 0; i < rows.length; i += 1) {
-    const ym = yearMonthInTz(rows[i].record_ts, tz);
-    const cur = map.get(ym) || { gallons: 0, minutes: 0 };
-    cur.gallons += gallons[i] || 0;
-    cur.minutes += dtMinutes[i] || 0;
-    map.set(ym, cur);
+    const intervalEnd = new Date(rows[i].record_ts);
+    const intervalStart =
+      i === 0
+        ? new Date(startUtc)
+        : new Date(rows[i - 1].record_ts);
+    const startMs = intervalStart.getTime();
+    const endMs = intervalEnd.getTime();
+    const totalMs = endMs - startMs;
+    const intervalGallons = Number(gallons[i] || 0);
+    const intervalMinutes = Number(dtMinutes[i] || 0);
+    if (
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(endMs) ||
+      !Number.isFinite(totalMs) ||
+      totalMs <= 0 ||
+      !Number.isFinite(intervalGallons) ||
+      !Number.isFinite(intervalMinutes)
+    ) {
+      continue;
+    }
+
+    let cursorMs = startMs;
+    while (cursorMs < endMs) {
+      const ym = yearMonthInTz(new Date(cursorMs), tz);
+      const boundaryMs = nextMonthStartUtc(new Date(cursorMs), tz).getTime();
+      const segmentEndMs = Math.min(endMs, boundaryMs);
+      const ratio = (segmentEndMs - cursorMs) / totalMs;
+      const cur = map.get(ym) || { gallons: 0, minutes: 0 };
+      cur.gallons += intervalGallons * ratio;
+      cur.minutes += intervalMinutes * ratio;
+      map.set(ym, cur);
+      cursorMs = segmentEndMs;
+    }
   }
   return map;
 }
@@ -78,6 +145,7 @@ function fmtInt(n) {
  *   rows: unknown[];
  *   gallons: number[];
  *   dtMinutes: number[];
+ *   startUtc: Date;
  * }} opts
  */
 export async function writeFlowSummaryPdf(opts) {
@@ -92,13 +160,14 @@ export async function writeFlowSummaryPdf(opts) {
     rows,
     gallons,
     dtMinutes,
+    startUtc,
   } = opts;
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const firstYmd = `${year}-01-01`;
   const monthKeys = enumerateMonths(firstYmd, endInclusiveYmd);
-  const byMonth = aggregateMonthly(rows, gallons, dtMinutes, tz);
+  const byMonth = aggregateMonthly(rows, gallons, dtMinutes, tz, startUtc);
 
   const doc = new PDFDocument({ margin: 50, size: "LETTER" });
   const outStream = fs.createWriteStream(outPath);
