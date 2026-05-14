@@ -417,6 +417,21 @@ function namedHydroFlowStreamMetricKey(source, unit) {
   return null;
 }
 
+function namedGridExportMetricKey(source, unit) {
+  const s = String(source);
+  const u = String(unit || "").toLowerCase();
+  const isSceExport =
+    s.includes("power to sce") || (s.includes("#2") && s.includes("net meter"));
+  if (!isSceExport) return null;
+
+  for (const [regex, label] of METRIC_SUFFIX_RULES) {
+    if (regex.test(s)) return `power_sce_export_${label}`;
+  }
+  if (u.includes("kwh")) return "energy_sce_export";
+  if (s.includes("power") || u === "kw") return "power_sce_export";
+  return null;
+}
+
 function parseColumnSpec(columnName, context = {}) {
   if (!columnName) return null;
   const clean = String(columnName).trim();
@@ -439,6 +454,10 @@ function parseColumnSpec(columnName, context = {}) {
   const stream = namedHydroFlowStreamMetricKey(source, unit);
   if (stream) {
     return { source: inferSystem(source), metric: stream, unit };
+  }
+  const gridExport = namedGridExportMetricKey(source, unit);
+  if (gridExport) {
+    return { source: inferSystem(source), metric: gridExport, unit };
   }
 
   let metric = detectMetric(source, unit);
