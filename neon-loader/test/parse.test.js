@@ -32,6 +32,24 @@ test("parseGzipLog parses acquisuite csv headers to normalized tall rows", () =>
   assert.equal(result.measurableHeaders.length, 2);
 });
 
+test("parseGzipLog keeps source systems for same-key solar and hydro power rows", () => {
+  const payload = [
+    "time(UTC),error,lowalarm,highalarm,Solar Array Power Instantaneous (kW),Hydro Plant Power Instantaneous (kW)",
+    "2026-03-20T00:00:00Z,0,0,0,18.5,42.25",
+  ].join("\n");
+  const gzip = gzipSync(Buffer.from(payload, "utf8"));
+  const result = parseGzipLog(gzip);
+
+  const instantaneous = result.tallRows.filter(
+    (r) => r.metricKey === "power_instantaneous",
+  );
+  assert.equal(instantaneous.length, 2);
+  assert.deepEqual(
+    instantaneous.map((r) => r.sourceSystem).sort(),
+    ["hydro_plant", "solar_field"],
+  );
+});
+
 test("parseUtcTime handles AcquiSuite space-separated UTC timestamps", () => {
   assert.equal(
     parseUtcTime("2026-02-23 14:30:00"),

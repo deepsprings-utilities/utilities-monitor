@@ -1,5 +1,13 @@
 import { Pool } from "pg";
 
+export const TALL_ROW_IDEMPOTENCY_COLUMNS = [
+  "serial",
+  "record_ts",
+  "metric_key",
+  "source_system",
+  "source_file_id",
+];
+
 /** Rows per INSERT statement; larger = fewer round-trips (default avoids huge queries when raw_text is large). */
 function insertBatchSize() {
   const n = Number(process.env.INSERT_BATCH_ROWS ?? "250");
@@ -153,7 +161,7 @@ export async function insertTallRows(client, fileId, serial, tallRows, label) {
         serial, record_ts, metric_key, metric_value, unit, quality, source_file_id,
         source_system, error_flag, low_alarm, high_alarm, device_address, physical_group
       ) VALUES ${placeholders.join(", ")}
-      ON CONFLICT (serial, record_ts, metric_key, source_file_id)
+      ON CONFLICT (${TALL_ROW_IDEMPOTENCY_COLUMNS.join(", ")})
       DO NOTHING`,
       values,
     );
