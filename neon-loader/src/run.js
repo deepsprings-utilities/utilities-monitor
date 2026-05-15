@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
 import { checkpointPairKey, fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
 import { parseGzipLog } from "./parse.js";
+import { hasMeasurableHeaders, tallRowsForIngest } from "./ingest-policy.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
 
@@ -79,15 +80,16 @@ async function main() {
         headerAliases: strictSchema ? schema.headerAliases || {} : {},
         columnOrder,
       });
-      if (!label.hasData && parsed.measurableHeaders && parsed.measurableHeaders.length > 0) {
+      const tallRowsToInsert = tallRowsForIngest(label, parsed);
+      if (!label.hasData && hasMeasurableHeaders(parsed)) {
         const preview = parsed.measurableHeaders.slice(0, 5).join(" | ");
         console.warn(
-          `warning key=${object.key} device=${label.deviceAddress} hasData=false but measurable headers detected: ${preview}`,
+          `warning key=${object.key} device=${label.deviceAddress} hasData=false but measurable headers detected; inserting measurable tall rows=${tallRowsToInsert.length}: ${preview}`,
         );
       }
       if (dryRun) {
         console.log(
-          `dry_run key=${object.key} rows=${parsed.rawRecords.length} tall=${parsed.tallRows.length} label=${label.labelCode}`,
+          `dry_run key=${object.key} rows=${parsed.rawRecords.length} tall=${tallRowsToInsert.length} label=${label.labelCode}`,
         );
         stats.succeeded += 1;
         continue;
@@ -109,20 +111,20 @@ async function main() {
         });
 
         await insertRawRecords(client, fileId, parsed.rawRecords, label);
-        if (label.hasData) {
-          const tallWithTs = parsed.tallRows.filter((r) => r.recordTs).length;
-          if (parsed.rawRecords.length > 0 && parsed.tallRows.length === 0) {
+        if (label.hasData || tallRowsToInsert.length > 0) {
+          const tallWithTs = tallRowsToInsert.filter((r) => r.recordTs).length;
+          if (parsed.rawRecords.length > 0 && tallRowsToInsert.length === 0) {
             console.warn(
               `warning key=${object.key} device=${label.deviceAddress} schemaId=${label.schemaId} raw_rows=${parsed.rawRecords.length} tall_rows=0 (no measurable numeric columns — strict schema, loose parse, or non-numeric cells)`,
             );
           }
-          if (parsed.tallRows.length > 0 && tallWithTs === 0) {
+          if (tallRowsToInsert.length > 0 && tallWithTs === 0) {
             const sample = parsed.rawRecords[0]?.parsedJson || {};
             console.warn(
-              `warning key=${object.key} device=${label.deviceAddress} parsed ${parsed.tallRows.length} tall rows but none had record_ts; check time column sample=${JSON.stringify(sample)}`,
+              `warning key=${object.key} device=${label.deviceAddress} parsed ${tallRowsToInsert.length} tall rows but none had record_ts; check time column sample=${JSON.stringify(sample)}`,
             );
           }
-          await insertTallRows(client, fileId, serial, parsed.tallRows, label);
+          await insertTallRows(client, fileId, serial, tallRowsToInsert, label);
         } else {
           console.warn(
             `skip_utility_measurement_tall key=${object.key} label=${label.labelCode} device=${label.deviceAddress} reason=hasData_false (ingest_raw_record still written)`,
