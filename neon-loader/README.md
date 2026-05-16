@@ -58,8 +58,8 @@ Each device entry should include:
 - `NEON_DATABASE_URL`
 - Optional:
   - `INGEST_PREFIX` (default: `log-gz/`)
-  - `INGEST_BATCH_LIMIT` (default: `200`) — **maximum R2 objects to process in one ingest run**. Listing is paginated across the bucket; raise this (e.g. `2000`, `5000`) for backlog catch-up. Each scheduled ingest run (currently **every 2 hours** via [`.github/workflows/ingest-r2-to-neon.yml`](../.github/workflows/ingest-r2-to-neon.yml)) drains up to this many keys; backlog may need multiple runs or a larger limit (GitHub Actions jobs time out after **360 minutes** unless lowered).
-  - `INGEST_LIST_SCAN_CAP` (default: `250000`) — how many keys may be scanned before selecting the newest `INGEST_BATCH_LIMIT` objects. If your prefix has more keys than this cap, ingest fails by default to avoid silent starvation.
+  - `INGEST_BATCH_LIMIT` (default: `200`) — **maximum unprocessed R2 objects to process in one ingest run**. Listing is paginated across the bucket, checkpointed keys are filtered out, then the newest unprocessed objects are selected. Raise this (e.g. `2000`, `5000`) for backlog catch-up. Each scheduled ingest run (currently **every 2 hours** via [`.github/workflows/ingest-r2-to-neon.yml`](../.github/workflows/ingest-r2-to-neon.yml)) drains up to this many keys; backlog may need multiple runs or a larger limit (GitHub Actions jobs time out after **360 minutes** unless lowered).
+  - `INGEST_LIST_SCAN_CAP` (default: `250000`) — how many keys may be scanned before selecting the newest unprocessed `INGEST_BATCH_LIMIT` objects. If your prefix has more keys than this cap, ingest fails by default to avoid silent starvation.
   - `FAIL_ON_TRUNCATED_LIST` (default: `1`) — when `1`/unset, fail ingest if R2 listing is truncated at `INGEST_LIST_SCAN_CAP`; set to `0` only if you intentionally accept partial scans.
   - `LABEL_MAP_PATH` (default: `./label-map.json`)
   - `DRY_RUN=1` (parse-only, no DB writes)
