@@ -21,6 +21,60 @@ export function yearMonthInTz(isoTs, tz) {
   return `${y}-${mo}`;
 }
 
+function dateTimePartsInTz(instant, tz) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(instant);
+  const value = (type) => Number(parts.find((p) => p.type === type).value);
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: value("hour"),
+    minute: value("minute"),
+    second: value("second"),
+  };
+}
+
+function zonedDateTimeToUtcMs({ year, month, day, hour = 0, minute = 0, second = 0 }, tz) {
+  const targetAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  let utcMs = targetAsUtc;
+  for (let i = 0; i < 3; i += 1) {
+    const parts = dateTimePartsInTz(new Date(utcMs), tz);
+    const localAsUtc = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
+    );
+    const offsetMs = localAsUtc - utcMs;
+    const nextUtcMs = targetAsUtc - offsetMs;
+    if (Math.abs(nextUtcMs - utcMs) < 1) return nextUtcMs;
+    utcMs = nextUtcMs;
+  }
+  return utcMs;
+}
+
+function nextMonthBoundaryUtcMs(instantMs, tz) {
+  const parts = dateTimePartsInTz(new Date(instantMs), tz);
+  let year = parts.year;
+  let month = parts.month + 1;
+  if (month > 12) {
+    month = 1;
+    year += 1;
+  }
+  return zonedDateTimeToUtcMs({ year, month, day: 1 }, tz);
+}
+
 /** Months from start month through end month inclusive (cross-year safe). */
 export function enumerateMonths(firstYmd, lastYmd) {
   const months = [];
@@ -40,17 +94,37 @@ export function enumerateMonths(firstYmd, lastYmd) {
 }
 
 /**
- * Sum gallons and minutes per calendar month (interval attributed to row `record_ts` month in tz).
+ * Sum gallons and minutes per calendar month, splitting intervals at local
+ * month boundaries so sparse readings do not move prior-month volume forward.
  */
 export function aggregateMonthly(rows, gallons, dtMinutes, tz) {
   /** @type {Map<string, { gallons: number; minutes: number }>} */
   const map = new Map();
   for (let i = 0; i < rows.length; i += 1) {
-    const ym = yearMonthInTz(rows[i].record_ts, tz);
-    const cur = map.get(ym) || { gallons: 0, minutes: 0 };
-    cur.gallons += gallons[i] || 0;
-    cur.minutes += dtMinutes[i] || 0;
-    map.set(ym, cur);
+    const minutes = Number(dtMinutes[i] || 0);
+    const totalGallons = Number(gallons[i] || 0);
+    const endMs = new Date(rows[i].record_ts).getTime();
+    if (!Number.isFinite(endMs) || !Number.isFinite(minutes) || minutes <= 0) {
+      continue;
+    }
+
+    const gallonsPerMinute = Number.isFinite(totalGallons) ? totalGallons / minutes : 0;
+    let cursorMs = endMs - minutes * 60000;
+
+    while (cursorMs < endMs) {
+      const ym = yearMonthInTz(new Date(cursorMs + 1), tz);
+      const boundaryMs = nextMonthBoundaryUtcMs(cursorMs + 1, tz);
+      const sliceEndMs =
+        Number.isFinite(boundaryMs) && boundaryMs > cursorMs
+          ? Math.min(endMs, boundaryMs)
+          : endMs;
+      const sliceMinutes = (sliceEndMs - cursorMs) / 60000;
+      const cur = map.get(ym) || { gallons: 0, minutes: 0 };
+      cur.gallons += gallonsPerMinute * sliceMinutes;
+      cur.minutes += sliceMinutes;
+      map.set(ym, cur);
+      cursorMs = sliceEndMs;
+    }
   }
   return map;
 }
