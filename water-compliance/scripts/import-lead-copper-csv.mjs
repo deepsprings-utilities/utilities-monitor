@@ -174,6 +174,11 @@ async function main() {
       notes: dueNotes,
     });
   }
+  if (rows.length === 0) {
+    throw new Error(
+      `No lead/copper schedule rows parsed from ${sourceName}; refusing to replace existing water_sampling_schedule rows.`,
+    );
+  }
 
   const pool = new Pool({ connectionString: conn });
   const client = await pool.connect();

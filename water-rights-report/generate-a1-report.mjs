@@ -25,6 +25,7 @@
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
  *   SKIP_FLOW_SUMMARY_PDF — if `1` or `true`, skip PDF (Excel only)
+ *   ALLOW_EMPTY_REPORT — if `1` or `true`, permit a zero-row report; default fails closed
  */
 
 import fs from "node:fs";
@@ -259,6 +260,12 @@ async function main() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(endInclusive)) {
     throw new Error(`Invalid REPORT_END: ${endInclusive} (expected YYYY-MM-DD)`);
   }
+  const reportStartYmd = `${year}-01-01`;
+  if (endInclusive < reportStartYmd) {
+    throw new Error(
+      `Invalid REPORT_END: ${endInclusive} is before REPORT_YEAR ${year} starts (${reportStartYmd})`,
+    );
+  }
   const streamRaw = env("REPORT_FLOW_STREAM", "wyman").toLowerCase();
   if (streamRaw !== "wyman" && streamRaw !== "booster") {
     throw new Error(
@@ -334,6 +341,11 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      if (!/^(1|true|yes)$/i.test(env("ALLOW_EMPTY_REPORT", ""))) {
+        throw new Error(
+          "No flow rows matched report filters; refusing to write/upload an empty A1 report. Set ALLOW_EMPTY_REPORT=1 only for intentional blank reports.",
+        );
+      }
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
@@ -375,7 +387,7 @@ async function main() {
 
     await workbook.xlsx.writeFile(outPath);
 
-    const skipPdf = /^1|true|yes$/i.test(env("SKIP_FLOW_SUMMARY_PDF", ""));
+    const skipPdf = /^(1|true|yes)$/i.test(env("SKIP_FLOW_SUMMARY_PDF", ""));
     let summaryPdfPath = "";
 
     if (!skipPdf) {
