@@ -17,13 +17,13 @@ export function createR2ClientFromEnv() {
 const LIST_PAGE_MAX = 1000;
 
 /**
- * Lists objects under prefix, prioritizing **newest LastModified first** before applying
- * `maxKeys`. R2/S3 returns keys in **lexicographic key order**; without this, each run could
- * see the same first N keys (all already checkpointed) and never reach newer uploads.
+ * Lists objects under prefix, prioritizing **newest LastModified first**. R2/S3 returns keys in
+ * **lexicographic key order**; without this, each run could see the same first N keys (all already
+ * checkpointed) and never reach newer uploads.
  *
  * @param {object} opts
- * @param {number} [opts.maxKeys] — how many keys to return (process per run); default 200
- * @param {number} [opts.listScanCap] — max keys to list before sort+slice; default from INGEST_LIST_SCAN_CAP or 250000
+ * @param {number} [opts.maxKeys] — per-run processing target; used only as a scan-cap floor
+ * @param {number} [opts.listScanCap] — max keys to list before sort; default from INGEST_LIST_SCAN_CAP or 250000
  */
 export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanCap }) {
   const processLimit = Number(maxKeys);
@@ -86,7 +86,7 @@ export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanC
     return tb - ta;
   });
 
-  return accum.slice(0, processCap);
+  return accum;
 }
 
 export async function getR2ObjectBytes(client, { bucket, key }) {
