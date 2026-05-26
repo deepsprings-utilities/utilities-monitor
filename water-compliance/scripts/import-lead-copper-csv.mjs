@@ -174,6 +174,11 @@ async function main() {
       notes: dueNotes,
     });
   }
+  if (rows.length === 0) {
+    throw new Error(
+      `Parsed 0 lead/copper rows from ${sourceName}; refusing to delete existing rows for that source_file.`,
+    );
+  }
 
   const pool = new Pool({ connectionString: conn });
   const client = await pool.connect();

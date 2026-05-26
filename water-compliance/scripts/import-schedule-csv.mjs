@@ -137,6 +137,11 @@ async function main() {
       notes,
     });
   }
+  if (rows.length === 0) {
+    throw new Error(
+      `Parsed 0 schedule rows from ${sourceName}; refusing to delete existing rows for that source_file.`,
+    );
+  }
 
   const pool = new Pool({ connectionString: conn });
   const client = await pool.connect();

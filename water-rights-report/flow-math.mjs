@@ -11,7 +11,7 @@ export function computeFlowIntervals(rows, startUtc) {
     let dtMin;
     let fPrev;
     if (i === 0) {
-      dtMin = (t - startUtc.getTime()) / 60000;
+      dtMin = 0;
       fPrev = f;
     } else {
       const tPrev = new Date(rows[i - 1].record_ts).getTime();

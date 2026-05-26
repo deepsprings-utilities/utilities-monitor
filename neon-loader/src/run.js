@@ -6,6 +6,7 @@ import { checkpointPairKey, fetchProcessedPairSet, markProcessed } from "./check
 import { parseGzipLog } from "./parse.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
+import { assertMeasurableTallRowsHaveTimestamps } from "./ingest-validation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -122,6 +123,7 @@ async function main() {
               `warning key=${object.key} device=${label.deviceAddress} parsed ${parsed.tallRows.length} tall rows but none had record_ts; check time column sample=${JSON.stringify(sample)}`,
             );
           }
+          assertMeasurableTallRowsHaveTimestamps({ parsed, label, objectKey: object.key });
           await insertTallRows(client, fileId, serial, parsed.tallRows, label);
         } else {
           console.warn(
