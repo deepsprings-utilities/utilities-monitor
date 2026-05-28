@@ -250,7 +250,9 @@ async function collectAlarmRows(client, lookbackMinutes, limit) {
 }
 
 async function collectBundle(client, opts) {
-  const stale = await collectStaleGroups(client, opts.staleAfterMinutes);
+  const stale = opts.disableStaleAlerts
+    ? []
+    : await collectStaleGroups(client, opts.staleAfterMinutes);
   const hydroRaw = await evaluateHydroOut(
     client,
     opts.hydroRecentMinutes,
@@ -457,6 +459,7 @@ function logSnapshot(bundle, opts, firing) {
       waterSkipped: bundle.water.skipped,
       alarmRowCount: bundle.alarms.length,
       thresholds: {
+        disableStaleAlerts: opts.disableStaleAlerts,
         staleAfterMinutes: opts.staleAfterMinutes,
         hydroMinKw: opts.hydroMinKw,
         hydroRecentMinutes: opts.hydroRecentMinutes,
@@ -469,7 +472,8 @@ function logSnapshot(bundle, opts, firing) {
 
 async function main() {
   const dryRun = process.env.NOTIFY_DRY_RUN === "1" || process.env.NOTIFY_DRY_RUN === "true";
-  const staleAfterMinutes = envInt("ALERT_STALE_AFTER_MINUTES", 240);
+  const disableStaleAlerts = envTruthy("DISABLE_STALE_ALERTS");
+  const staleAfterMinutes = envInt("ALERT_STALE_AFTER_MINUTES", 480);
   const cooldownMinutes = envInt("ALERT_COOLDOWN_MINUTES", 360);
   const hydroRecentMinutes = envInt("ALERT_HYDRO_RECENT_MINUTES", 60);
   const hydroMinKw = envFloat("ALERT_HYDRO_MIN_KW", 5);
@@ -494,6 +498,7 @@ async function main() {
   }
 
   const bundleOpts = {
+    disableStaleAlerts,
     staleAfterMinutes,
     hydroRecentMinutes,
     hydroMinKw,
@@ -511,7 +516,7 @@ async function main() {
 
     if (!firing) {
       console.log(
-        `[notify-email-alerts] OK: no stale groups, hydro OK, no water due rows, no alarm rows in ${alarmLookbackMinutes}m window.`,
+        `[notify-email-alerts] OK: no stale groups, hydro OK, no water due rows, no alarm rows in ${alarmLookbackMinutes}m window.${disableStaleAlerts ? " stale alerts disabled." : ""}`,
       );
       console.log(
         "[notify-email-alerts] Resend: no API call — nothing to alert (inbox empty in Resend).",

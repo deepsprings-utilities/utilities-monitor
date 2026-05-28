@@ -27,6 +27,8 @@ jobs:
       ALERT_HYDRO_RECENT_MINUTES: ${{ vars.ALERT_HYDRO_RECENT_MINUTES }}
       ALERT_ALARM_LOOKBACK_MINUTES: ${{ vars.ALERT_ALARM_LOOKBACK_MINUTES }}
       ALERT_ALARM_ROW_LIMIT: ${{ vars.ALERT_ALARM_ROW_LIMIT }}
+      # Temporary freeze for stale-data notifications while tuning thresholds/query logic.
+      DISABLE_STALE_ALERTS: "1"
       # Set to 1 for one manual run to send a test email via Resend (remove after).
       NOTIFY_SEND_TEST: ${{ secrets.NOTIFY_SEND_TEST }}
       # Set to 1 once to bypass cooldown if firing=true but dedupe blocked (remove after).
