@@ -22,6 +22,7 @@ It is **separate** from AcquiSuite HTTP ingest (`worker/`) and R2→Neon (`neon-
 - **`NEON_DATABASE_URL`** (required for `generate`)
 - Flow rows must match tall table reality: default metric is **`flow_wyman_avg`** (Wyman Creek on mb-006 per ingest / Grafana). If your export used **`flow_C`**, set Variable **`WATER_RIGHTS_FLOW_METRIC`** accordingly.
 - **`WATER_RIGHTS_FLOW_SCALE`** — multiply stored GPM before the workbook (CI defaults to **4** if Variable unset; set **`1`** to use raw Neon values).
+- Empty reports fail by default so missing data is not uploaded as a successful artifact. Set **`ALLOW_EMPTY_REPORT=1`** only for an intentional zero-row run.
 - Optional: **`WATER_RIGHTS_SERIAL`** or **`WATER_RIGHTS_DEVICE_ADDRESS`** (e.g. `mb-006`); **`REPORT_YEAR`**, **`REPORT_END`**, **`REPORT_TZ`**, and static columns (see `generate-a1-report.mjs`).
 
 ## Local run
@@ -42,7 +43,7 @@ A **monthly** (and manual) workflow runs **two jobs** from [`.github/workflows/w
 | `a1-report` | Wyman | `WATER_RIGHTS_USE_DROPBOX` | `WATER_RIGHTS_DROPBOX_DEST_FOLDER` |
 | `a1-booster-report` | Booster | `BOOSTER_USE_DROPBOX` | `BOOSTER_DROPBOX_DEST_FOLDER` |
 
-Booster timing/year defaults fall back to the same **`WATER_RIGHTS_REPORT_*`** Variables if **`BOOSTER_REPORT_YEAR`** / **`BOOSTER_REPORT_END`** are unset. Booster-specific overrides: **`BOOSTER_FLOW_METRIC`**, **`BOOSTER_DEVICE_ADDRESS`**, **`BOOSTER_FLOW_SCALE`**, static column `BOOSTER_*` or fallback `WATER_RIGHTS_*`.
+Booster timing/year/scale defaults fall back to the same **`WATER_RIGHTS_REPORT_*`** and **`WATER_RIGHTS_FLOW_SCALE`** Variables if the matching **`BOOSTER_*`** Variable is unset. Booster-specific overrides: **`BOOSTER_FLOW_METRIC`**, **`BOOSTER_DEVICE_ADDRESS`**, **`BOOSTER_FLOW_SCALE`**, static column `BOOSTER_*` or fallback `WATER_RIGHTS_*`.
 
 ### Dropbox upload (monthly A1 `.xlsx`)
 

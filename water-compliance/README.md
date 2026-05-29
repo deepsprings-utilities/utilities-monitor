@@ -41,7 +41,8 @@ node scripts/import-schedule-csv.mjs "/path/to/STANDBY-LAST-AND-NEXT-SAMPLE-REPO
 ```
 
 Re-importing the same file name **replaces** rows for that source (full refresh), because
-`source_file` is always set to the CSV filename.
+`source_file` is always set to the CSV filename. Imports that parse zero schedule rows fail before
+deleting existing rows, so a bad export cannot silently wipe a source.
 
 ### Active vs standby wells
 
