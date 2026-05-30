@@ -25,7 +25,8 @@ async function main() {
   const runId = `${Date.now()}`;
   const bucket = mustGetEnv("R2_BUCKET_NAME");
   const prefix = process.env.INGEST_PREFIX || "log-gz/";
-  const maxKeys = Number(process.env.INGEST_BATCH_LIMIT || "200");
+  const maxKeysRaw = Number(process.env.INGEST_BATCH_LIMIT || "200");
+  const maxKeys = Number.isFinite(maxKeysRaw) && maxKeysRaw > 0 ? maxKeysRaw : 200;
   const listScanCap = Number(process.env.INGEST_LIST_SCAN_CAP || "");
   const dryRun = process.env.DRY_RUN === "1";
 
@@ -33,27 +34,33 @@ async function main() {
   const db = createDbPoolFromEnv();
   const labelMapConfig = await loadLabelMap();
 
-  const objects = await listR2Objects(r2, {
+  const scannedObjects = await listR2Objects(r2, {
     bucket,
     prefix,
     maxKeys,
     ...(Number.isFinite(listScanCap) && listScanCap > 0 ? { listScanCap } : {}),
   });
-  const stats = {
-    listed: objects.length,
-    skipped: 0,
-    succeeded: 0,
-    failed: 0,
-  };
-  console.log(
-    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${objects.length} dry_run=${dryRun}`,
-  );
-
-  const checkpointPairs = objects.map((o) => ({
+  const checkpointPairs = scannedObjects.map((o) => ({
     r2Key: o.key,
     etag: o.etag || "no_etag",
   }));
   const processedSet = await fetchProcessedPairSet(db, checkpointPairs);
+  const unprocessedObjects = scannedObjects.filter((o) => {
+    const etag = o.etag || "no_etag";
+    return !processedSet.has(checkpointPairKey(o.key, etag));
+  });
+  const objects = unprocessedObjects.slice(0, maxKeys);
+  const stats = {
+    listed: scannedObjects.length,
+    selected: objects.length,
+    skipped: scannedObjects.length - unprocessedObjects.length,
+    deferred: Math.max(0, unprocessedObjects.length - objects.length),
+    succeeded: 0,
+    failed: 0,
+  };
+  console.log(
+    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${scannedObjects.length} selected=${objects.length} checkpoint_skipped=${stats.skipped} deferred=${stats.deferred} dry_run=${dryRun}`,
+  );
 
   for (const object of objects) {
     const etag = object.etag || "no_etag";
@@ -159,10 +166,11 @@ async function main() {
 
   await db.end();
   console.log(
-    `run_complete run_id=${runId} listed=${stats.listed} skipped=${stats.skipped} succeeded=${stats.succeeded} failed=${stats.failed}`,
+    `run_complete run_id=${runId} listed=${stats.listed} selected=${stats.selected} skipped=${stats.skipped} deferred=${stats.deferred} succeeded=${stats.succeeded} failed=${stats.failed}`,
   );
   if (
     stats.listed > 0 &&
+    stats.selected === 0 &&
     stats.skipped === stats.listed &&
     stats.succeeded === 0 &&
     stats.failed === 0

@@ -17,13 +17,14 @@ export function createR2ClientFromEnv() {
 const LIST_PAGE_MAX = 1000;
 
 /**
- * Lists objects under prefix, prioritizing **newest LastModified first** before applying
- * `maxKeys`. R2/S3 returns keys in **lexicographic key order**; without this, each run could
- * see the same first N keys (all already checkpointed) and never reach newer uploads.
+ * Lists objects under prefix, prioritizing **newest LastModified first**. R2/S3
+ * returns keys in **lexicographic key order**; callers apply their own batch
+ * limit after checkpoint filtering so already-processed keys cannot starve a
+ * backlog of older unprocessed uploads.
  *
  * @param {object} opts
- * @param {number} [opts.maxKeys] — how many keys to return (process per run); default 200
- * @param {number} [opts.listScanCap] — max keys to list before sort+slice; default from INGEST_LIST_SCAN_CAP or 250000
+ * @param {number} [opts.maxKeys] — process limit used as the minimum scan cap; default 200
+ * @param {number} [opts.listScanCap] — max keys to list before sorting; default from INGEST_LIST_SCAN_CAP or 250000
  */
 export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanCap }) {
   const processLimit = Number(maxKeys);
@@ -83,10 +84,11 @@ export async function listR2Objects(client, { bucket, prefix, maxKeys, listScanC
   accum.sort((a, b) => {
     const ta = a.lastModified instanceof Date ? a.lastModified.getTime() : 0;
     const tb = b.lastModified instanceof Date ? b.lastModified.getTime() : 0;
-    return tb - ta;
+    if (tb !== ta) return tb - ta;
+    return a.key.localeCompare(b.key);
   });
 
-  return accum.slice(0, processCap);
+  return accum;
 }
 
 export async function getR2ObjectBytes(client, { bucket, key }) {
