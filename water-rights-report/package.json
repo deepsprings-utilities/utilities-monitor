@@ -9,6 +9,7 @@
     "generate": "node generate-a1-report.mjs",
     "generate:wyman": "REPORT_FLOW_STREAM=wyman node generate-a1-report.mjs",
     "generate:booster": "REPORT_FLOW_STREAM=booster node generate-a1-report.mjs",
+    "test": "node --test",
     "upload-drive": "node upload-google-drive.mjs",
     "upload-dropbox": "node upload-dropbox.mjs"
   },

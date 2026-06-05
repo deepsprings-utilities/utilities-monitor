@@ -19,6 +19,8 @@
  *   WATER_RIGHTS_DEVICE_ADDRESS — optional; booster defaults to mb-003 if unset
  *   WATER_RIGHTS_FLOW_SCALE — multiply Neon GPM before report math + cells (default 1 local;
  *     GitHub workflow defaults to 4 when Variable unset — set to 1 to disable)
+ *   ALLOW_EMPTY_REPORT — set to 1/true/yes only for diagnostics; default fails before writing
+ *     empty official outputs.
  *   FLOW_RATE_UNIT_TEXT — default "GALLONS PER MINUTE"
  *   VOLUME_UNIT_TEXT — default "GALLONS"
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
@@ -38,10 +40,46 @@ import { writeFlowSummaryPdf } from "./pdf-flow-summary.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function isMainModule() {
+  const a = process.argv[1];
+  if (!a) return false;
+  try {
+    return path.resolve(a) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
 function env(name, fallback = "") {
   const v = process.env[name];
   if (v === undefined || v === "") return fallback;
   return v;
+}
+
+function envTruthy(name) {
+  return /^(1|true|yes)$/i.test(env(name, ""));
+}
+
+export function resolveReportYear(rawReportYear, endInclusiveYmd) {
+  const raw =
+    rawReportYear === undefined || rawReportYear === ""
+      ? endInclusiveYmd.slice(0, 4)
+      : rawReportYear;
+  const year = Number(raw);
+  if (!Number.isFinite(year) || year < 1970 || year > 2100) {
+    throw new Error(`Invalid REPORT_YEAR: ${raw}`);
+  }
+  return year;
+}
+
+export function assertRowsPresent(
+  rows,
+  { allowEmptyReport, stream, metricKey, year, endInclusive },
+) {
+  if (rows.length > 0 || allowEmptyReport) return;
+  throw new Error(
+    `No flow rows matched ${stream}/${metricKey} for ${year} through ${endInclusive}; refusing to write an empty Template A1 report. Set ALLOW_EMPTY_REPORT=1 only for diagnostics.`,
+  );
 }
 
 /** Previous calendar day for the given tz’s “today” (YYYY-MM-DD). */
@@ -251,14 +289,11 @@ async function main() {
   }
 
   const tz = env("REPORT_TZ", "America/Los_Angeles");
-  const year = Number(env("REPORT_YEAR", String(new Date().getFullYear())));
-  if (!Number.isFinite(year) || year < 1970 || year > 2100) {
-    throw new Error(`Invalid REPORT_YEAR: ${year}`);
-  }
   const endInclusive = env("REPORT_END", yesterdayYmd(tz));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(endInclusive)) {
     throw new Error(`Invalid REPORT_END: ${endInclusive} (expected YYYY-MM-DD)`);
   }
+  const year = resolveReportYear(process.env.REPORT_YEAR, endInclusive);
   const streamRaw = env("REPORT_FLOW_STREAM", "wyman").toLowerCase();
   if (streamRaw !== "wyman" && streamRaw !== "booster") {
     throw new Error(
@@ -334,9 +369,20 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      assertRowsPresent(rows, {
+        allowEmptyReport: envTruthy("ALLOW_EMPTY_REPORT"),
+        stream: streamRaw,
+        metricKey,
+        year,
+        endInclusive,
+      });
     }
 
-    const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
+    const { gallons, dtMinutes } = computeFlowIntervals(
+      rows,
+      startUtc,
+      tEndExclusive,
+    );
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(templatePath);
@@ -425,7 +471,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (isMainModule()) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
