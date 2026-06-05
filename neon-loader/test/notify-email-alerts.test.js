@@ -4,6 +4,7 @@ import {
   buildAlertSubject,
   buildBundlePayload,
   bundleHasFire,
+  evaluateHydroOut,
   firingSectionLabels,
   parseRecipientList,
 } from "../src/notify-email-alerts.js";
@@ -91,6 +92,26 @@ test("buildAlertSubject lists only firing sections", () => {
   );
 });
 
+test("buildAlertSubject labels stale hydro kW separately from low output", () => {
+  assert.strictEqual(
+    buildAlertSubject(
+      {
+        stale: [],
+        hydro: {
+          fire: true,
+          value: 0,
+          record_ts: new Date(),
+          reason: "reading_not_recent",
+        },
+        water: { count: 0, skipped: false },
+        alarms: [],
+      },
+      testOpts,
+    ),
+    "[AcquiSuite] Alert: hydro kW stale",
+  );
+});
+
 test("bundleHasFire", () => {
   assert.strictEqual(
     bundleHasFire({
@@ -110,4 +131,52 @@ test("bundleHasFire", () => {
     }),
     true,
   );
+});
+
+function fakeHydroClient(rows) {
+  return {
+    async query() {
+      return { rows };
+    },
+  };
+}
+
+test("evaluateHydroOut fires when hydro kW rows are missing", async () => {
+  const hydro = await evaluateHydroOut(fakeHydroClient([]), 60, 5);
+
+  assert.strictEqual(hydro.fire, true);
+  assert.strictEqual(hydro.reason, "no_kw_rows");
+});
+
+test("evaluateHydroOut fires when latest hydro kW is stale", async () => {
+  const hydro = await evaluateHydroOut(
+    fakeHydroClient([
+      {
+        metric_value: 0,
+        record_ts: new Date(Date.now() - 90 * 60 * 1000),
+        metric_key: "power_instantaneous",
+      },
+    ]),
+    60,
+    5,
+  );
+
+  assert.strictEqual(hydro.fire, true);
+  assert.strictEqual(hydro.reason, "reading_not_recent");
+});
+
+test("evaluateHydroOut keeps recent healthy kW as non-firing", async () => {
+  const hydro = await evaluateHydroOut(
+    fakeHydroClient([
+      {
+        metric_value: 12,
+        record_ts: new Date(),
+        metric_key: "power_instantaneous",
+      },
+    ]),
+    60,
+    5,
+  );
+
+  assert.strictEqual(hydro.fire, false);
 });
