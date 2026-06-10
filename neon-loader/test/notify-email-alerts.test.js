@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildAlertSubject,
@@ -15,6 +16,18 @@ const testOpts = {
   alarmLookbackMinutes: 240,
   alarmRowLimit: 40,
 };
+
+test("email alert workflow keeps legacy recipient secret fallback", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/neon-email-alerts.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    workflow,
+    /ALERT_EMAIL_TO:\s*\$\{\{\s*vars\.ALERT_EMAIL_TO\s*\|\|\s*secrets\.ALERT_EMAIL_TO\s*\}\}/,
+  );
+});
 
 test("parseRecipientList empty", () => {
   assert.deepStrictEqual(parseRecipientList(""), []);
