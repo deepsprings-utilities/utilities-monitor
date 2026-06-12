@@ -7,7 +7,7 @@
     "timezone": "browser",
     "schemaVersion": 39,
     "version": 4,
-    "refresh": "1h",
+    "refresh": "2h",
     "tags": ["utilities", "public", "citizen", "deep-springs", "neon"],
     "time": {
       "from": "now-7d",
@@ -20,22 +20,11 @@
         "id": 1,
         "type": "text",
         "title": "",
-        "gridPos": { "h": 4, "w": 18, "x": 0, "y": 0 },
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
         "transparent": true,
         "options": {
           "mode": "markdown",
-          "content": "# Deep Springs utilities\n\nLive electricity and water from campus meters. Use the time picker above — **default is the last week**.\n\nSolar, hydro, and grid power are on one chart so you can see how each source compares over time."
-        }
-      },
-      {
-        "id": 2,
-        "type": "text",
-        "title": "Illustration",
-        "description": "Reserved for a campus utilities diagram or artwork. Replace this panel content when the illustration is ready.",
-        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-        "options": {
-          "mode": "markdown",
-          "content": "*Illustration coming soon — campus water and power flow.*"
+          "content": "# Deep Springs utilities\n\nLive electricity and water from campus meters. Use the time picker above. **Default is the last week**. Data updates every two hours.\n\nSolar, hydro, and grid power are on one chart so you can see how each source compares over time."
         }
       },
       {
