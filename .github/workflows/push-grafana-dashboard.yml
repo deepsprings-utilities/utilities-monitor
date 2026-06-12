@@ -11,7 +11,7 @@ on:
       dashboard:
         description: "Path under neon-loader (e.g. grafana/dashboard.utilities-ops-hud.json)"
         required: true
-        default: "grafana/dashboard.utilities-ops-hud.json"
+        default: "grafana/dashboard.utilities-citizen.json"
         type: string
   push:
     branches:
