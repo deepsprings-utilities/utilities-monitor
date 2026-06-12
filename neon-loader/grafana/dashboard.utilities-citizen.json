@@ -98,7 +98,7 @@
         "id": 4,
         "type": "timeseries",
         "title": "Water flow (gallons per minute)",
-        "description": "Creek intake at the hydro plant, booster pump output, and deep-well pump output — average flow over each time bucket.",
+        "description": "Creek intake at the hydro plant (×4 calibration scale), booster pump output, and deep-well pump output — average flow over each time bucket.",
         "gridPos": { "h": 10, "w": 24, "x": 0, "y": 19 },
         "datasource": {
           "type": "grafana-postgresql-datasource",
@@ -145,7 +145,7 @@
             "editorMode": "code",
             "format": "time_series",
             "rawQuery": true,
-            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Wyman Creek intake' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-006'\n  AND physical_group = 'hydro_plant'\n  AND metric_key = 'flow_wyman_avg'\n  AND unit = 'Gpm'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Booster pump' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-003'\n  AND physical_group = 'booster_pump'\n  AND metric_key IN ('flow_avg', 'flow_avg_A')\n  AND UPPER(COALESCE(unit, '')) LIKE '%GPM%'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Deep well pump' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-008'\n  AND physical_group = 'deep_well'\n  AND metric_key LIKE 'flow%avg%'\n  AND UPPER(COALESCE(unit, '')) LIKE '%GPM%'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nORDER BY 1;"
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) * 4 AS value, 'Wyman Creek intake' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-006'\n  AND physical_group = 'hydro_plant'\n  AND metric_key = 'flow_wyman_avg'\n  AND unit = 'Gpm'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Booster pump' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-003'\n  AND physical_group = 'booster_pump'\n  AND metric_key IN ('flow_avg', 'flow_avg_A')\n  AND UPPER(COALESCE(unit, '')) LIKE '%GPM%'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Deep well pump' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-008'\n  AND physical_group = 'deep_well'\n  AND metric_key LIKE 'flow%avg%'\n  AND UPPER(COALESCE(unit, '')) LIKE '%GPM%'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nORDER BY 1;"
           }
         ]
       }
