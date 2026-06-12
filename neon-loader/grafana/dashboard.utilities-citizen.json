@@ -1,0 +1,159 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "utilities-citizen",
+    "title": "Utilities — community view",
+    "description": "Plain-language electricity and water trends for curious readers — not the ops HUD. Default range is one week. Solar, hydro, and grid power are compared on one chart (like Grafana dashboard 16053). Re-import from git after edits (npm run grafana:push:citizen).",
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "1h",
+    "tags": ["utilities", "public", "citizen", "deep-springs", "neon"],
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "graphTooltip": 1,
+    "liveNow": false,
+    "panels": [
+      {
+        "id": 1,
+        "type": "text",
+        "title": "",
+        "gridPos": { "h": 4, "w": 18, "x": 0, "y": 0 },
+        "transparent": true,
+        "options": {
+          "mode": "markdown",
+          "content": "# Deep Springs utilities\n\nLive electricity and water from campus meters. Use the time picker above — **default is the last week**.\n\nSolar, hydro, and grid power are on one chart so you can see how each source compares over time."
+        }
+      },
+      {
+        "id": 2,
+        "type": "text",
+        "title": "Illustration",
+        "description": "Reserved for a campus utilities diagram or artwork. Replace this panel content when the illustration is ready.",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+        "options": {
+          "mode": "markdown",
+          "content": "*Illustration coming soon — campus water and power flow.*"
+        }
+      },
+      {
+        "id": 3,
+        "type": "timeseries",
+        "title": "Electricity by source (kW)",
+        "description": "Instantaneous power from on-site solar, the hydro plant, and the utility grid. All three series share one chart for easy comparison.",
+        "gridPos": { "h": 15, "w": 24, "x": 0, "y": 4 },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 1,
+            "unit": "kwatt",
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisPlacement": "auto",
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": { "group": "A", "mode": "none" },
+              "thresholdsStyle": { "mode": "off" }
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [{ "color": "green", "value": null }]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "calcs": ["mean", "max"],
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": { "mode": "multi", "sort": "desc" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Solar' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-005'\n  AND physical_group = 'solar_field'\n  AND metric_key = 'power_instantaneous_A'\n  AND unit = 'kW'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Hydro' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-005'\n  AND source_system = 'hydro_plant'\n  AND metric_key LIKE 'power_instantaneous%'\n  AND unit = 'kW'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Grid' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-001'\n  AND physical_group = 'electrical_grid'\n  AND metric_key = 'power_instantaneous'\n  AND unit = 'kW'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nORDER BY 1;"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "type": "timeseries",
+        "title": "Water flow (gallons per minute)",
+        "description": "Creek intake at the hydro plant, booster pump output, and deep-well pump output — average flow over each time bucket.",
+        "gridPos": { "h": 10, "w": 24, "x": 0, "y": 19 },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "__DATASOURCE_UID__"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "decimals": 0,
+            "unit": "flowgpm",
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "axisBorderShow": false,
+              "axisPlacement": "auto",
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": { "group": "A", "mode": "none" },
+              "thresholdsStyle": { "mode": "off" }
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [{ "color": "green", "value": null }]
+            }
+          },
+          "overrides": []
+        },
+        "options": {
+          "legend": {
+            "calcs": ["mean", "max"],
+            "displayMode": "table",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": { "mode": "multi", "sort": "desc" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "editorMode": "code",
+            "format": "time_series",
+            "rawQuery": true,
+            "rawSql": "SELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Wyman Creek intake' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-006'\n  AND physical_group = 'hydro_plant'\n  AND metric_key = 'flow_wyman_avg'\n  AND unit = 'Gpm'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Booster pump' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-003'\n  AND physical_group = 'booster_pump'\n  AND metric_key IN ('flow_avg', 'flow_avg_A')\n  AND UPPER(COALESCE(unit, '')) LIKE '%GPM%'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nUNION ALL\nSELECT $__timeGroup(record_ts, $__interval) AS \"time\", AVG(metric_value) AS value, 'Deep well pump' AS metric\nFROM public.utility_measurement_tall\nWHERE device_address = 'mb-008'\n  AND physical_group = 'deep_well'\n  AND metric_key LIKE 'flow%avg%'\n  AND UPPER(COALESCE(unit, '')) LIKE '%GPM%'\n  AND $__timeFilter(record_ts)\nGROUP BY 1\nORDER BY 1;"
+          }
+        ]
+      }
+    ],
+    "templating": { "list": [] },
+    "annotations": { "list": [] }
+  },
+  "folderUid": null,
+  "overwrite": true,
+  "message": "Community utilities dashboard: multi-source electricity + water trends"
+}

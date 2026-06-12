@@ -112,11 +112,13 @@ Templates live under `neon-loader/grafana/`. The push script substitutes `__DATA
 |--------|-------------------|
 | `npm run grafana:push` (default) | `grafana/dashboard.hydro-power.json` |
 | `npm run grafana:push:water` | `grafana/dashboard.water-compliance.json` (water sampling / ops schedule views over `water_sampling_schedule`) |
+| `npm run grafana:push:citizen` | `grafana/dashboard.utilities-citizen.json` (public electricity + water trends — no ops HUD styling) |
 
 ```bash
 npm run grafana:push
 # or
 npm run grafana:push:water
+npm run grafana:push:citizen
 ```
 
 Required environment variables:
