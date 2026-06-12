@@ -1,4 +1,5 @@
 # Run manually: Actions → "Push Grafana dashboard" → Run workflow
+# Also runs on push to main when files under neon-loader/grafana/ change.
 # Required repository Secrets: GRAFANA_URL, GRAFANA_TOKEN, GRAFANA_DATASOURCE_UID
 # (Settings → Secrets and variables → Actions)
 
@@ -12,6 +13,12 @@ on:
         required: true
         default: "grafana/dashboard.utilities-ops-hud.json"
         type: string
+  push:
+    branches:
+      - main
+      - acquisuite-ingest
+    paths:
+      - "neon-loader/grafana/**"
 
 jobs:
   push:
@@ -27,10 +34,28 @@ jobs:
       GRAFANA_DATASOURCE_UID: ${{ secrets.GRAFANA_DATASOURCE_UID }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && 0 || 1 }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Push dashboard
-        run: node scripts/push-grafana-dashboard.mjs --dashboard "${{ inputs.dashboard }}"
+      - name: Push dashboard(s)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            node scripts/push-grafana-dashboard.mjs --dashboard "${{ inputs.dashboard }}"
+            exit 0
+          fi
+          changed="$(git diff --name-only "${{ github.event.before }}" "${{ github.event.after }}" | grep -E '^neon-loader/grafana/.*\.json$' || true)"
+          if [ -z "$changed" ]; then
+            echo "No dashboard JSON in this push; skipping."
+            exit 0
+          fi
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            rel="${path#neon-loader/}"
+            echo "Pushing ${rel} ..."
+            node scripts/push-grafana-dashboard.mjs --dashboard "$rel"
+          done <<< "$changed"
