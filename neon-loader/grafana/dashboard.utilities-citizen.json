@@ -62,7 +62,26 @@
               "steps": [{ "color": "green", "value": null }]
             }
           },
-          "overrides": []
+          "overrides": [
+            {
+              "matcher": { "id": "byName", "options": "Solar" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#eab308" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Hydro" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#3b82f6" } }
+              ]
+            },
+            {
+              "matcher": { "id": "byName", "options": "Grid" },
+              "properties": [
+                { "id": "color", "value": { "mode": "fixed", "fixedColor": "#ef4444" } }
+              ]
+            }
+          ]
         },
         "options": {
           "legend": {
