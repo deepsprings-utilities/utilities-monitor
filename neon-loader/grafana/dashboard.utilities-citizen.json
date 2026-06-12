@@ -6,7 +6,7 @@
     "description": "Plain-language electricity and water trends for curious readers — not the ops HUD. Default range is one week. Solar, hydro, and grid power are compared on one chart (like Grafana dashboard 16053). Re-import from git after edits (npm run grafana:push:citizen).",
     "timezone": "browser",
     "schemaVersion": 39,
-    "version": 3,
+    "version": 4,
     "refresh": "1h",
     "tags": ["utilities", "public", "citizen", "deep-springs", "neon"],
     "time": {

@@ -51,10 +51,11 @@ jobs:
           fi
           before="${{ github.event.before }}"
           after="${{ github.sha }}"
+          # Job working-directory is neon-loader/; git pathspec must be grafana/ not neon-loader/grafana/.
           if [ "$before" = "0000000000000000000000000000000000000000" ]; then
-            changed="$(git show --name-only --pretty=format: "$after" -- neon-loader/grafana/ | grep -E '\.json$' || true)"
+            changed="$(git show --name-only --pretty=format: "$after" -- grafana/ | grep -E '\.json$' || true)"
           else
-            changed="$(git diff --name-only "$before" "$after" -- neon-loader/grafana/ | grep -E '\.json$' || true)"
+            changed="$(git diff --name-only "$before" "$after" -- grafana/ | grep -E '\.json$' || true)"
           fi
           if [ -z "$changed" ]; then
             echo "No dashboard JSON in this push; skipping."
