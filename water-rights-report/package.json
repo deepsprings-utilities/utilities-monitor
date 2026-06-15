@@ -10,7 +10,8 @@
     "generate:wyman": "REPORT_FLOW_STREAM=wyman node generate-a1-report.mjs",
     "generate:booster": "REPORT_FLOW_STREAM=booster node generate-a1-report.mjs",
     "upload-drive": "node upload-google-drive.mjs",
-    "upload-dropbox": "node upload-dropbox.mjs"
+    "upload-dropbox": "node upload-dropbox.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "dropbox": "^10.34.0",
