@@ -174,6 +174,11 @@ async function main() {
       notes: dueNotes,
     });
   }
+  if (rows.length === 0) {
+    throw new Error(
+      `Refusing to replace ${sourceName}: parsed zero lead/copper rows from CSV`,
+    );
+  }
 
   const pool = new Pool({ connectionString: conn });
   const client = await pool.connect();

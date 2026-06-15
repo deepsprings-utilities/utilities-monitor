@@ -25,6 +25,7 @@
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
  *   SKIP_FLOW_SUMMARY_PDF — if `1` or `true`, skip PDF (Excel only)
+ *   ALLOW_EMPTY_REPORT — if `1` or `true`, allow zero-row report output
  */
 
 import fs from "node:fs";
@@ -334,6 +335,11 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      if (!/^1|true|yes$/i.test(env("ALLOW_EMPTY_REPORT", ""))) {
+        throw new Error(
+          `No flow rows matched report filters for ${streamRaw} ${year} as of ${endInclusive}; refusing to write empty A1 artifacts`,
+        );
+      }
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "import-schedule": "node scripts/import-schedule-csv.mjs",
-    "import-lead-copper": "node scripts/import-lead-copper-csv.mjs"
+    "import-lead-copper": "node scripts/import-lead-copper-csv.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "pg": "^8.16.3"
