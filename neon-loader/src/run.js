@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
-import { checkpointPairKey, fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
+import { fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
+import { selectObjectsForIngest } from "./ingest-selection.js";
 import { parseGzipLog } from "./parse.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
@@ -54,19 +55,23 @@ async function main() {
     etag: o.etag || "no_etag",
   }));
   const processedSet = await fetchProcessedPairSet(db, checkpointPairs);
+  const { selected: objectsToProcess, skipped } = selectObjectsForIngest(
+    objects,
+    processedSet,
+    maxKeys,
+  );
+  stats.skipped = skipped;
+  console.log(
+    `selection listed=${objects.length} skipped_checkpointed=${stats.skipped} selected_for_processing=${objectsToProcess.length} max_objects_this_run=${maxKeys}`,
+  );
 
-  for (const object of objects) {
+  for (const object of objectsToProcess) {
     const etag = object.etag || "no_etag";
     const fileName = path.basename(object.key);
     const label = resolveLabel(labelMapConfig, fileName);
     const serial = serialFromKey(object.key);
 
     try {
-      if (processedSet.has(checkpointPairKey(object.key, etag))) {
-        stats.skipped += 1;
-        continue;
-      }
-
       console.log(`processing key=${object.key}`);
       const bytes = await getR2ObjectBytes(r2, { bucket, key: object.key });
       const schema = (labelMapConfig.schemas || {})[label.schemaId] || {};
