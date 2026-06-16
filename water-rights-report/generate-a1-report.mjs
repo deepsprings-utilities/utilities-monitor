@@ -397,6 +397,7 @@ async function main() {
         rows,
         gallons,
         dtMinutes,
+        startUtc,
       });
     }
 
