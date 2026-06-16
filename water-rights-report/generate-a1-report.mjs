@@ -35,6 +35,7 @@ import ExcelJS from "exceljs";
 import pg from "pg";
 import { computeFlowIntervals } from "./flow-math.mjs";
 import { writeFlowSummaryPdf } from "./pdf-flow-summary.mjs";
+import { assertReportRows, assertReportWindow } from "./report-validation.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -252,13 +253,8 @@ async function main() {
 
   const tz = env("REPORT_TZ", "America/Los_Angeles");
   const year = Number(env("REPORT_YEAR", String(new Date().getFullYear())));
-  if (!Number.isFinite(year) || year < 1970 || year > 2100) {
-    throw new Error(`Invalid REPORT_YEAR: ${year}`);
-  }
   const endInclusive = env("REPORT_END", yesterdayYmd(tz));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(endInclusive)) {
-    throw new Error(`Invalid REPORT_END: ${endInclusive} (expected YYYY-MM-DD)`);
-  }
+  assertReportWindow({ year, endInclusive });
   const streamRaw = env("REPORT_FLOW_STREAM", "wyman").toLowerCase();
   if (streamRaw !== "wyman" && streamRaw !== "booster") {
     throw new Error(
@@ -334,6 +330,14 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      assertReportRows(rows, {
+        year,
+        endInclusive,
+        stream: streamRaw,
+        metricKey,
+        serial: serial || null,
+        deviceAddress: deviceAddress || null,
+      });
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);

@@ -18,6 +18,10 @@ function checkpointLookupChunkSize() {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 5000) : 500;
 }
 
+function normalizeEtag(etag) {
+  return etag || "no_etag";
+}
+
 /**
  * Which `(r2_key, etag)` pairs already exist in `ingest_checkpoint` — one query per chunk
  * (bounded by Postgres parameter limits), instead of one transaction per object.
@@ -52,6 +56,49 @@ export async function fetchProcessedPairSet(pool, pairs) {
     }
   }
   return set;
+}
+
+/**
+ * Select up to `maxObjects` uncheckpointed objects from an already-prioritized scan window.
+ * The batch cap has to be applied after checkpoint filtering; otherwise repeated runs can
+ * keep selecting only recent, already-processed keys and never drain older backlog.
+ *
+ * @param {import("pg").Pool} pool
+ * @param {Array<{ key: string, etag?: string }>} objects
+ * @param {number} maxObjects
+ * @returns {Promise<{ objects: Array<{ key: string, etag?: string }>, examined: number, checkpointed: number }>}
+ */
+export async function selectUnprocessedObjects(pool, objects, maxObjects) {
+  const limit = Number(maxObjects);
+  const maxSelected = Number.isFinite(limit) && limit > 0 ? limit : 200;
+  const selected = [];
+  let examined = 0;
+  let checkpointed = 0;
+  const chunkSize = checkpointLookupChunkSize();
+
+  for (let i = 0; i < objects.length && selected.length < maxSelected; i += chunkSize) {
+    const batch = objects.slice(i, i + chunkSize);
+    const processedSet = await fetchProcessedPairSet(
+      pool,
+      batch.map((o) => ({
+        r2Key: o.key,
+        etag: normalizeEtag(o.etag),
+      })),
+    );
+
+    for (const object of batch) {
+      examined += 1;
+      const key = checkpointPairKey(object.key, normalizeEtag(object.etag));
+      if (processedSet.has(key)) {
+        checkpointed += 1;
+        continue;
+      }
+      selected.push(object);
+      if (selected.length >= maxSelected) break;
+    }
+  }
+
+  return { objects: selected, examined, checkpointed };
 }
 
 export async function markProcessed(client, { r2Key, etag, runId }) {
