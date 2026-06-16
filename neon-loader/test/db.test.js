@@ -1,6 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { physicalGroupForTallRow } from "../src/db.js";
+import {
+  TALL_ROW_IDEMPOTENCY_COLUMNS,
+  physicalGroupForTallRow,
+} from "../src/db.js";
+
+test("tall row idempotency distinguishes same metric from different source systems", () => {
+  assert.deepEqual(TALL_ROW_IDEMPOTENCY_COLUMNS, [
+    "serial",
+    "record_ts",
+    "metric_key",
+    "source_system",
+    "source_file_id",
+  ]);
+});
 
 test("physicalGroupForTallRow prefers inferred source_system when not unknown", () => {
   const labelSolar = {
