@@ -31,6 +31,9 @@ jobs:
       INGEST_PREFIX: ${{ vars.INGEST_PREFIX || 'log-gz/' }}
       # Max R2 objects per workflow run (raise repository Variable INGEST_BATCH_LIMIT for backlog catch-up).
       INGEST_BATCH_LIMIT: ${{ vars.INGEST_BATCH_LIMIT || '200' }}
+      # Max R2 keys to scan before selecting the newest batch; fail on truncation by default.
+      INGEST_LIST_SCAN_CAP: ${{ vars.INGEST_LIST_SCAN_CAP || '250000' }}
+      FAIL_ON_TRUNCATED_LIST: ${{ vars.FAIL_ON_TRUNCATED_LIST || '1' }}
       # Rows per INSERT for raw + tall tables (neon-loader INSERT_BATCH_ROWS); optional repo Variable.
       INSERT_BATCH_ROWS: ${{ vars.INSERT_BATCH_ROWS || '250' }}
     steps:
