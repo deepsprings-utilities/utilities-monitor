@@ -25,6 +25,7 @@
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
  *   SKIP_FLOW_SUMMARY_PDF — if `1` or `true`, skip PDF (Excel only)
+ *   ALLOW_EMPTY_REPORT — if `1` or `true`, allow zero-row reports; default is to fail closed
  */
 
 import fs from "node:fs";
@@ -42,6 +43,10 @@ function env(name, fallback = "") {
   const v = process.env[name];
   if (v === undefined || v === "") return fallback;
   return v;
+}
+
+function envFlag(name) {
+  return /^(1|true|yes)$/i.test(env(name, ""));
 }
 
 /** Previous calendar day for the given tz’s “today” (YYYY-MM-DD). */
@@ -154,6 +159,11 @@ async function loadRows(
   const orderTail =
     boosterPlan && boosterPlan.useDistinctOn
       ? `ORDER BY record_ts ASC,
+          CASE
+            WHEN physical_group = 'booster_pump' OR source_system = 'booster_pump'
+              THEN 0
+            ELSE 1
+          END ASC,
           CASE metric_key
             WHEN 'flow_avg_A' THEN 1
             WHEN 'flow_avg' THEN 2
@@ -334,6 +344,11 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      if (!envFlag("ALLOW_EMPTY_REPORT")) {
+        throw new Error(
+          `No flow rows matched ${streamRaw} report filters for ${year} through ${endInclusive}; refusing to write empty report`,
+        );
+      }
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
@@ -375,7 +390,7 @@ async function main() {
 
     await workbook.xlsx.writeFile(outPath);
 
-    const skipPdf = /^1|true|yes$/i.test(env("SKIP_FLOW_SUMMARY_PDF", ""));
+    const skipPdf = envFlag("SKIP_FLOW_SUMMARY_PDF");
     let summaryPdfPath = "";
 
     if (!skipPdf) {

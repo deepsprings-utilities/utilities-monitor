@@ -138,6 +138,12 @@ async function main() {
     });
   }
 
+  if (rows.length === 0) {
+    throw new Error(
+      `Refusing to replace ${sourceName}: parsed 0 schedule rows from CSV`,
+    );
+  }
+
   const pool = new Pool({ connectionString: conn });
   const client = await pool.connect();
   try {
