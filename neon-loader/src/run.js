@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
-import { checkpointPairKey, fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
+import { fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
+import { countProcessedObjects, normalizeEtag, selectObjectsForIngest } from "./ingest-selection.js";
 import { parseGzipLog } from "./parse.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
@@ -33,40 +34,37 @@ async function main() {
   const db = createDbPoolFromEnv();
   const labelMapConfig = await loadLabelMap();
 
-  const objects = await listR2Objects(r2, {
+  const scannedObjects = await listR2Objects(r2, {
     bucket,
     prefix,
     maxKeys,
     ...(Number.isFinite(listScanCap) && listScanCap > 0 ? { listScanCap } : {}),
   });
+  const checkpointPairs = scannedObjects.map((o) => ({
+    r2Key: o.key,
+    etag: normalizeEtag(o.etag),
+  }));
+  const processedSet = await fetchProcessedPairSet(db, checkpointPairs);
+  const alreadyProcessed = countProcessedObjects(scannedObjects, processedSet);
+  const objects = selectObjectsForIngest(scannedObjects, processedSet, maxKeys);
+
   const stats = {
-    listed: objects.length,
-    skipped: 0,
+    listed: scannedObjects.length,
+    skipped: alreadyProcessed,
     succeeded: 0,
     failed: 0,
   };
   console.log(
-    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${objects.length} dry_run=${dryRun}`,
+    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${scannedObjects.length} already_processed=${alreadyProcessed} selected=${objects.length} dry_run=${dryRun}`,
   );
 
-  const checkpointPairs = objects.map((o) => ({
-    r2Key: o.key,
-    etag: o.etag || "no_etag",
-  }));
-  const processedSet = await fetchProcessedPairSet(db, checkpointPairs);
-
   for (const object of objects) {
-    const etag = object.etag || "no_etag";
+    const etag = normalizeEtag(object.etag);
     const fileName = path.basename(object.key);
     const label = resolveLabel(labelMapConfig, fileName);
     const serial = serialFromKey(object.key);
 
     try {
-      if (processedSet.has(checkpointPairKey(object.key, etag))) {
-        stats.skipped += 1;
-        continue;
-      }
-
       console.log(`processing key=${object.key}`);
       const bytes = await getR2ObjectBytes(r2, { bucket, key: object.key });
       const schema = (labelMapConfig.schemas || {})[label.schemaId] || {};
@@ -163,7 +161,7 @@ async function main() {
   );
   if (
     stats.listed > 0 &&
-    stats.skipped === stats.listed &&
+    alreadyProcessed === stats.listed &&
     stats.succeeded === 0 &&
     stats.failed === 0
   ) {

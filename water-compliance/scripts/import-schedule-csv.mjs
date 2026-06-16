@@ -137,6 +137,11 @@ async function main() {
       notes,
     });
   }
+  if (rows.length === 0) {
+    throw new Error(
+      `No schedule rows parsed from ${sourceName}; refusing to replace existing water_sampling_schedule rows.`,
+    );
+  }
 
   const pool = new Pool({ connectionString: conn });
   const client = await pool.connect();
