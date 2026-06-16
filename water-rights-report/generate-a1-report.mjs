@@ -25,12 +25,13 @@
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
  *   SKIP_FLOW_SUMMARY_PDF — if `1` or `true`, skip PDF (Excel only)
+ *   ALLOW_EMPTY_REPORT — if `1`/`true`/`yes`, permit generating a report with zero data rows
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ExcelJS from "exceljs";
 import pg from "pg";
 import { computeFlowIntervals } from "./flow-math.mjs";
@@ -42,6 +43,26 @@ function env(name, fallback = "") {
   const v = process.env[name];
   if (v === undefined || v === "") return fallback;
   return v;
+}
+
+export function flagEnabled(value) {
+  return /^(1|true|yes)$/i.test(String(value || ""));
+}
+
+export function ensureRowsPresent(rows, context = {}) {
+  if (rows.length > 0 || flagEnabled(context.allowEmptyReport)) return;
+
+  const details = [
+    `stream=${context.stream || "unknown"}`,
+    `metric=${context.metricKey || "unknown"}`,
+    `year=${context.year || "unknown"}`,
+    `end=${context.endInclusive || "unknown"}`,
+  ];
+  if (context.serial) details.push(`serial=${context.serial}`);
+  if (context.deviceAddress) details.push(`device=${context.deviceAddress}`);
+  throw new Error(
+    `No flow rows matched report filters (${details.join(", ")}); refusing to write an empty A1 report. Set ALLOW_EMPTY_REPORT=1 only for an intentional empty report.`,
+  );
 }
 
 /** Previous calendar day for the given tz’s “today” (YYYY-MM-DD). */
@@ -243,7 +264,7 @@ function applyFlowScale(rows, scale) {
   }));
 }
 
-async function main() {
+export async function main() {
   const databaseUrl = process.env.NEON_DATABASE_URL;
   if (!databaseUrl || !String(databaseUrl).trim()) {
     console.error("NEON_DATABASE_URL is required");
@@ -334,6 +355,15 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      ensureRowsPresent(rows, {
+        allowEmptyReport: env("ALLOW_EMPTY_REPORT", ""),
+        year,
+        endInclusive,
+        stream: streamRaw,
+        metricKey,
+        serial: serial || null,
+        deviceAddress: deviceAddress || null,
+      });
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
@@ -425,7 +455,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
