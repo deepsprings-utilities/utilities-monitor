@@ -35,6 +35,7 @@ import ExcelJS from "exceljs";
 import pg from "pg";
 import { computeFlowIntervals } from "./flow-math.mjs";
 import { writeFlowSummaryPdf } from "./pdf-flow-summary.mjs";
+import { assertReportRows } from "./report-validation.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -334,6 +335,14 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      assertReportRows(rows, {
+        year,
+        endInclusive,
+        stream: streamRaw,
+        metricKey,
+        serial: serial || null,
+        deviceAddress: deviceAddress || null,
+      });
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
