@@ -25,6 +25,7 @@
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
  *   SKIP_FLOW_SUMMARY_PDF — if `1` or `true`, skip PDF (Excel only)
+ *   ALLOW_EMPTY_REPORT — if `1` or `true`, permit a zero-row report (default: fail)
  */
 
 import fs from "node:fs";
@@ -35,6 +36,7 @@ import ExcelJS from "exceljs";
 import pg from "pg";
 import { computeFlowIntervals } from "./flow-math.mjs";
 import { writeFlowSummaryPdf } from "./pdf-flow-summary.mjs";
+import { resolveReportWindow } from "./report-window.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,26 +44,6 @@ function env(name, fallback = "") {
   const v = process.env[name];
   if (v === undefined || v === "") return fallback;
   return v;
-}
-
-/** Previous calendar day for the given tz’s “today” (YYYY-MM-DD). */
-function yesterdayYmd(tz) {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const y = Number(parts.find((p) => p.type === "year").value);
-  const mo = Number(parts.find((p) => p.type === "month").value);
-  const d = Number(parts.find((p) => p.type === "day").value);
-  const civil = new Date(Date.UTC(y, mo - 1, d));
-  civil.setUTCDate(civil.getUTCDate() - 1);
-  const yy = civil.getUTCFullYear();
-  const mm = String(civil.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(civil.getUTCDate()).padStart(2, "0");
-  return `${yy}-${mm}-${dd}`;
 }
 
 function formatLocalDateTime(isoTs, tz) {
@@ -243,6 +225,10 @@ function applyFlowScale(rows, scale) {
   }));
 }
 
+function truthyEnv(value) {
+  return /^(1|true|yes)$/i.test(String(value || "").trim());
+}
+
 async function main() {
   const databaseUrl = process.env.NEON_DATABASE_URL;
   if (!databaseUrl || !String(databaseUrl).trim()) {
@@ -250,15 +236,7 @@ async function main() {
     process.exit(1);
   }
 
-  const tz = env("REPORT_TZ", "America/Los_Angeles");
-  const year = Number(env("REPORT_YEAR", String(new Date().getFullYear())));
-  if (!Number.isFinite(year) || year < 1970 || year > 2100) {
-    throw new Error(`Invalid REPORT_YEAR: ${year}`);
-  }
-  const endInclusive = env("REPORT_END", yesterdayYmd(tz));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(endInclusive)) {
-    throw new Error(`Invalid REPORT_END: ${endInclusive} (expected YYYY-MM-DD)`);
-  }
+  const { tz, year, endInclusive } = resolveReportWindow(process.env);
   const streamRaw = env("REPORT_FLOW_STREAM", "wyman").toLowerCase();
   if (streamRaw !== "wyman" && streamRaw !== "booster") {
     throw new Error(
@@ -334,6 +312,11 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      if (!truthyEnv(env("ALLOW_EMPTY_REPORT"))) {
+        throw new Error(
+          "No flow rows matched the report filters; refusing to write empty A1 artifacts. Set ALLOW_EMPTY_REPORT=1 to override intentionally.",
+        );
+      }
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
@@ -375,7 +358,7 @@ async function main() {
 
     await workbook.xlsx.writeFile(outPath);
 
-    const skipPdf = /^1|true|yes$/i.test(env("SKIP_FLOW_SUMMARY_PDF", ""));
+    const skipPdf = truthyEnv(env("SKIP_FLOW_SUMMARY_PDF", ""));
     let summaryPdfPath = "";
 
     if (!skipPdf) {
