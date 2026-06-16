@@ -21,6 +21,7 @@
  *     GitHub workflow defaults to 4 when Variable unset — set to 1 to disable)
  *   FLOW_RATE_UNIT_TEXT — default "GALLONS PER MINUTE"
  *   VOLUME_UNIT_TEXT — default "GALLONS"
+ *   ALLOW_EMPTY_REPORT — set to 1/true/yes to permit an intentionally empty report
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
  *   OUT_PATH — override output path (default: ./dist/Template-A1-{Wyman|Booster}-{year}-asof-{end}.xlsx)
  *   OUT_SUMMARY_PDF_PATH — optional path for monthly GPM / acre-feet PDF (default beside xlsx name)
@@ -313,6 +314,7 @@ async function main() {
     rows = applyFlowScale(rows, flowScale);
 
     if (rows.length === 0) {
+      const allowEmptyReport = /^1|true|yes$/i.test(env("ALLOW_EMPTY_REPORT", ""));
       console.warn(
         JSON.stringify({
           warn: "no_rows_after_filters",
@@ -334,6 +336,11 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      if (!allowEmptyReport) {
+        throw new Error(
+          "No water-rights flow rows matched report filters; refusing to write an empty report. Set ALLOW_EMPTY_REPORT=1 only for an intentional blank report.",
+        );
+      }
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
