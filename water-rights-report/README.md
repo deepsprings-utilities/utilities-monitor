@@ -23,6 +23,7 @@ It is **separate** from AcquiSuite HTTP ingest (`worker/`) and R2→Neon (`neon-
 - Flow rows must match tall table reality: default metric is **`flow_wyman_avg`** (Wyman Creek on mb-006 per ingest / Grafana). If your export used **`flow_C`**, set Variable **`WATER_RIGHTS_FLOW_METRIC`** accordingly.
 - **`WATER_RIGHTS_FLOW_SCALE`** — multiply stored GPM before the workbook (CI defaults to **4** if Variable unset; set **`1`** to use raw Neon values).
 - Optional: **`WATER_RIGHTS_SERIAL`** or **`WATER_RIGHTS_DEVICE_ADDRESS`** (e.g. `mb-006`); **`REPORT_YEAR`**, **`REPORT_END`**, **`REPORT_TZ`**, and static columns (see `generate-a1-report.mjs`).
+- Empty result sets fail before writing/uploading official outputs. Set **`ALLOW_EMPTY_REPORT=1`** only for diagnostics.
 
 ## Local run
 

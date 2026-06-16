@@ -103,7 +103,8 @@ export function buildBundlePayload(bundle) {
         ? Number(bundle.hydro.value).toFixed(2)
         : "";
     const mk = bundle.hydro.metric_key ?? "";
-    hydroPart = `${bundle.hydro.fire ? "1" : "0"}|${v}|${mk}`;
+    const reason = bundle.hydro.reason ?? "";
+    hydroPart = `${bundle.hydro.fire ? "1" : "0"}|${v}|${mk}|${reason}`;
   }
   const waterPart = `${bundle.water.skipped ? "skip" : "ok"}|${bundle.water.count}`;
   const alarmLines = bundle.alarms
@@ -154,11 +155,13 @@ async function collectStaleGroups(client, staleAfterMinutes) {
 }
 
 /**
- * Grafana "Hydro Out": latest hydro kW < threshold only if reading is recent (see manifest evaluate_for).
+ * Hydro alert: latest hydro kW below threshold, missing, or stale. The generic
+ * stale-data check groups all hydro_plant metrics, so fresh flow rows must not
+ * mask missing/stale kW telemetry.
  * Matches neon-loader/grafana/alerts/queries/hydro-out-alert.sql + threshold_kw 5.
  * @param {import('pg').PoolClient} client
  */
-async function evaluateHydroOut(client, recentMinutes, minKw) {
+export async function evaluateHydroOut(client, recentMinutes, minKw) {
   /** Match Grafana HUD / hydro-power (source_system OR physical_group, LIKE for metric). */
   const { rows } = await client.query(
     `
@@ -173,7 +176,14 @@ async function evaluateHydroOut(client, recentMinutes, minKw) {
   );
   const row = rows[0];
   if (!row) {
-    return null;
+    return {
+      fire: true,
+      value: null,
+      record_ts: null,
+      metric_key: null,
+      reason: "no_kw_rows",
+      ageMinutes: null,
+    };
   }
   const ts = row.record_ts instanceof Date ? row.record_ts : new Date(row.record_ts);
   const ageMs = Date.now() - ts.getTime();
@@ -183,7 +193,7 @@ async function evaluateHydroOut(client, recentMinutes, minKw) {
   const value = Number(row.metric_value);
   if (!recent) {
     return {
-      fire: false,
+      fire: true,
       value,
       record_ts: ts,
       metric_key: row.metric_key,
@@ -366,7 +376,15 @@ async function sendTestProbeEmail({ apiKey, from, toList }) {
 export function firingSectionLabels(bundle, opts) {
   const labels = [];
   if (bundle.stale.length > 0) labels.push("stale data");
-  if (bundle.hydro?.fire) labels.push(`hydro < ${opts.hydroMinKw} kW`);
+  if (bundle.hydro?.fire) {
+    if (bundle.hydro.reason === "no_kw_rows") {
+      labels.push("hydro kW missing");
+    } else if (bundle.hydro.reason === "reading_not_recent") {
+      labels.push("hydro kW stale");
+    } else {
+      labels.push(`hydro < ${opts.hydroMinKw} kW`);
+    }
+  }
   if (!bundle.water.skipped && bundle.water.count > 0)
     labels.push("water sampling due");
   if (bundle.alarms.length > 0) labels.push("alarm flags");
@@ -396,12 +414,24 @@ function formatBundleEmail(bundle, opts) {
   }
 
   if (bundle.hydro?.fire) {
-    sections.push(
-      `Hydro out (< ${opts.hydroMinKw} kW, reading within last ${opts.hydroRecentMinutes} min):`,
-    );
-    sections.push(
-      `  ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW @ ${iso(bundle.hydro.record_ts)}`,
-    );
+    if (bundle.hydro.reason === "no_kw_rows") {
+      sections.push("Hydro kW missing:");
+      sections.push("  No hydro_plant power_instantaneous* kW rows were found.");
+    } else if (bundle.hydro.reason === "reading_not_recent") {
+      sections.push(
+        `Hydro kW stale (latest kW reading older than ${opts.hydroRecentMinutes} min):`,
+      );
+      sections.push(
+        `  ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW @ ${iso(bundle.hydro.record_ts)} (${bundle.hydro.ageMinutes} min old)`,
+      );
+    } else {
+      sections.push(
+        `Hydro out (< ${opts.hydroMinKw} kW, reading within last ${opts.hydroRecentMinutes} min):`,
+      );
+      sections.push(
+        `  ${bundle.hydro.metric_key ?? "?"} ${Number(bundle.hydro.value).toFixed(2)} kW @ ${iso(bundle.hydro.record_ts)}`,
+      );
+    }
     sections.push("");
   }
 
