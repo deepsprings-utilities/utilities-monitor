@@ -36,7 +36,8 @@ import pg from "pg";
 import { computeFlowIntervals } from "./flow-math.mjs";
 import { writeFlowSummaryPdf } from "./pdf-flow-summary.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const modulePath = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(modulePath);
 
 function env(name, fallback = "") {
   const v = process.env[name];
@@ -243,6 +244,23 @@ function applyFlowScale(rows, scale) {
   }));
 }
 
+export function requireReportRows(rows, context) {
+  if (rows.length > 0) return;
+
+  const filters = [
+    `stream=${context.stream}`,
+    `metric=${context.metricKey}`,
+    `year=${context.year}`,
+    `end=${context.endInclusive}`,
+  ];
+  if (context.serial) filters.push(`serial=${context.serial}`);
+  if (context.deviceAddress) filters.push(`device=${context.deviceAddress}`);
+
+  throw new Error(
+    `No flow rows matched the A1 report filters (${filters.join(", ")}); refusing to generate an empty compliance report.`,
+  );
+}
+
 async function main() {
   const databaseUrl = process.env.NEON_DATABASE_URL;
   if (!databaseUrl || !String(databaseUrl).trim()) {
@@ -334,6 +352,14 @@ async function main() {
         streamRaw,
         deviceAddress || null,
       );
+      requireReportRows(rows, {
+        year,
+        endInclusive,
+        stream: streamRaw,
+        metricKey,
+        serial: serial || null,
+        deviceAddress: deviceAddress || null,
+      });
     }
 
     const { gallons, dtMinutes } = computeFlowIntervals(rows, startUtc);
@@ -425,7 +451,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === modulePath) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
