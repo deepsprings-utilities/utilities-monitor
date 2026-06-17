@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDbPoolFromEnv, insertRawFile, insertRawRecords, insertTallRows, withTransaction } from "./db.js";
-import { checkpointPairKey, fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
+import { fetchProcessedPairSet, markProcessed } from "./checkpoint.js";
 import { parseGzipLog } from "./parse.js";
 import { createR2ClientFromEnv, getR2ObjectBytes, listR2Objects } from "./r2.js";
 import { loadLabelMap, resolveLabel } from "./labeling.js";
+import { selectObjectsForIngest } from "./ingest-selection.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,27 +34,33 @@ async function main() {
   const db = createDbPoolFromEnv();
   const labelMapConfig = await loadLabelMap();
 
-  const objects = await listR2Objects(r2, {
+  const candidateObjects = await listR2Objects(r2, {
     bucket,
     prefix,
     maxKeys,
     ...(Number.isFinite(listScanCap) && listScanCap > 0 ? { listScanCap } : {}),
   });
   const stats = {
-    listed: objects.length,
+    listed: candidateObjects.length,
     skipped: 0,
     succeeded: 0,
     failed: 0,
   };
-  console.log(
-    `run_id=${runId} prefix=${prefix} max_objects_this_run=${maxKeys} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${objects.length} dry_run=${dryRun}`,
-  );
 
-  const checkpointPairs = objects.map((o) => ({
+  const checkpointPairs = candidateObjects.map((o) => ({
     r2Key: o.key,
     etag: o.etag || "no_etag",
   }));
   const processedSet = await fetchProcessedPairSet(db, checkpointPairs);
+  const { selected: objects, skipped, processCap } = selectObjectsForIngest(
+    candidateObjects,
+    processedSet,
+    maxKeys,
+  );
+  stats.skipped = skipped;
+  console.log(
+    `run_id=${runId} prefix=${prefix} max_objects_this_run=${processCap} list_scan_cap_env=${process.env.INGEST_LIST_SCAN_CAP || "default"} listed=${candidateObjects.length} already_checkpointed=${skipped} selected=${objects.length} dry_run=${dryRun}`,
+  );
 
   for (const object of objects) {
     const etag = object.etag || "no_etag";
@@ -62,11 +69,6 @@ async function main() {
     const serial = serialFromKey(object.key);
 
     try {
-      if (processedSet.has(checkpointPairKey(object.key, etag))) {
-        stats.skipped += 1;
-        continue;
-      }
-
       console.log(`processing key=${object.key}`);
       const bytes = await getR2ObjectBytes(r2, { bucket, key: object.key });
       const schema = (labelMapConfig.schemas || {})[label.schemaId] || {};
