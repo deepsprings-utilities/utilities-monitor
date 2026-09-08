@@ -1,5 +1,7 @@
 # acquisuite-worker
 
+## view the grafana dashboard here: https://deepspringsutilities.grafana.net/public-dashboards/c254b86b37aa4f898e063068d5881b3c?from=2026-09-07T13:39:04.316Z&to=2026-09-08T02:48:06.782Z&timezone=browser
+
 This repository is a **monorepo** for the AcquisSuite data path: **devices upload logs → cloud storage (R2) → batch jobs load a Postgres database (Neon)**. Optional tools also import **water sampling schedules** and generate **regulatory water-rights** spreadsheets from the same database.
 
 **AI assistants and contributors:** see [`AGENTS.md`](AGENTS.md) for conventions, deploy notes, and pipeline expectations.
