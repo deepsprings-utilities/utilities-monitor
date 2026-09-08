@@ -445,6 +445,15 @@ function parseColumnSpec(columnName, context = {}) {
   const phase = detectPhase(source);
   if (phase) metric = `${metric}_${phase}`;
 
+  // mb-001 net meter: "Power from SCE ..." (grid import) and "Power to SCE ..."
+  // (grid export) both normalize to the same power* metric keys, and the tall
+  // table's conflict key (serial, record_ts, metric_key, source_file_id) would
+  // silently drop the export channel. Import keys stay unchanged so existing
+  // dashboards/alerts keep working; export gets its own power_export* keys.
+  if (/\bpower to sce\b/.test(source)) {
+    metric = metric.replace(/^power/, "power_export");
+  }
+
   source = inferSystem(source);
   return { source, metric, unit };
 }

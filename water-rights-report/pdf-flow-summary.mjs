@@ -66,9 +66,29 @@ function fmtInt(n) {
   return String(Math.round(n));
 }
 
+function summaryTitle(stream, streamLabel) {
+  if (stream === "booster") {
+    return `Flow summary (${streamLabel})`;
+  }
+  return `Flow diversion summary (${streamLabel})`;
+}
+
+function summaryMetaLine(stream, endInclusiveYmd, tz, metricKey, flowScale) {
+  const period = `Reporting period: Jan 1–${endInclusiveYmd} (${tz}).`;
+  const metric = `Data through Neon metric "${metricKey}".`;
+  if (stream === "booster") {
+    return `${period} ${metric} Values are raw GPM from the booster pump (mb-003).`;
+  }
+  if (flowScale !== 1) {
+    return `${period} ${metric} GPM includes ×${flowScale} calibration scale.`;
+  }
+  return `${period} ${metric}`;
+}
+
 /**
  * @param {{
  *   outPath: string;
+ *   stream: "wyman" | "booster";
  *   streamLabel: string;
  *   year: number;
  *   endInclusiveYmd: string;
@@ -83,6 +103,7 @@ function fmtInt(n) {
 export async function writeFlowSummaryPdf(opts) {
   const {
     outPath,
+    stream,
     streamLabel,
     year,
     endInclusiveYmd,
@@ -104,13 +125,13 @@ export async function writeFlowSummaryPdf(opts) {
   const outStream = fs.createWriteStream(outPath);
   doc.pipe(outStream);
 
-  doc.fontSize(16).text(`Flow diversion summary (${streamLabel})`, {
+  doc.fontSize(16).text(summaryTitle(stream, streamLabel), {
     underline: true,
   });
   doc.moveDown(0.5);
   doc.fontSize(10).fillColor("#333333");
   doc.text(
-    `Reporting period: Jan 1–${endInclusiveYmd} (${tz}). Data through Neon metric "${metricKey}"; GPM scale ×${flowScale}.`,
+    summaryMetaLine(stream, endInclusiveYmd, tz, metricKey, flowScale),
     { align: "left" },
   );
   doc.fillColor("#000000");

@@ -17,8 +17,8 @@
  *   REPORT_FLOW_STREAM — `wyman` | `booster` (default wyman)
  *   WATER_RIGHTS_FLOW_METRIC — default flow_wyman_avg (wyman) or flow_avg (booster; loads flow_avg_A+flow_avg)
  *   WATER_RIGHTS_DEVICE_ADDRESS — optional; booster defaults to mb-003 if unset
- *   WATER_RIGHTS_FLOW_SCALE — multiply Neon GPM before report math + cells (default 1 local;
- *     GitHub workflow defaults to 4 when Variable unset — set to 1 to disable)
+ *   WATER_RIGHTS_FLOW_SCALE — multiply Neon GPM before report math + cells (default 4 for
+ *     wyman, 1 for booster; override via env / CI Variables)
  *   FLOW_RATE_UNIT_TEXT — default "GALLONS PER MINUTE"
  *   VOLUME_UNIT_TEXT — default "GALLONS"
  *   BENEFICIAL_USE, WATER_RIGHT, REDIVERSION_STATUS, PLACE_OF_USE — optional static columns
@@ -278,7 +278,8 @@ async function main() {
     streamRaw === "booster"
       ? boosterMetricPlan(metricKey).label
       : metricKey;
-  const flowScaleRaw = env("WATER_RIGHTS_FLOW_SCALE", "1");
+  const flowScaleDefault = streamRaw === "wyman" ? "4" : "1";
+  const flowScaleRaw = env("WATER_RIGHTS_FLOW_SCALE", flowScaleDefault);
   const flowScale = Number(flowScaleRaw);
   if (!Number.isFinite(flowScale) || flowScale <= 0) {
     throw new Error(
@@ -388,6 +389,7 @@ async function main() {
       summaryPdfPath = env("OUT_SUMMARY_PDF_PATH") || defaultPdf;
       await writeFlowSummaryPdf({
         outPath: summaryPdfPath,
+        stream: streamRaw,
         streamLabel,
         year,
         endInclusiveYmd: endInclusive,

@@ -111,6 +111,26 @@ test("parseGzipLog handles tab header with comma-separated data rows", () => {
   assert.ok(result.tallRows.some((r) => r.metricValue === 12.5));
 });
 
+test("parseGzipLog keeps grid import and export channels distinct on mb-001 (power* vs power_export*)", () => {
+  const payload = [
+    "time(UTC),error,lowalarm,highalarm,Power from SCE Main Power Pulse #1 (kWh),Power from SCE Main Power Pulse #1 Instantaneous (kW),Power to SCE #2 Pulse from SCE net meter (kWh),Power to SCE #2 Pulse from SCE net meter Instantaneous (kW)",
+    "2026-06-12T12:00:00Z,0,0,0,1511901.6,12.4,836354.0,0",
+  ].join("\n");
+  const gzip = gzipSync(Buffer.from(payload, "utf8"));
+  const result = parseGzipLog(gzip);
+
+  assert.equal(result.tallRows.length, 4);
+  const keys = new Set(result.tallRows.map((r) => r.metricKey));
+  assert.ok(keys.has("power"));
+  assert.ok(keys.has("power_instantaneous"));
+  assert.ok(keys.has("power_export"));
+  assert.ok(keys.has("power_export_instantaneous"));
+  const exp = result.tallRows.find((r) => r.metricKey === "power_export");
+  assert.equal(exp.metricValue, 836354.0);
+  assert.equal(exp.unit, "kWh");
+  assert.equal(exp.sourceSystem, "electrical_grid");
+});
+
 test("parseGzipLog disambiguates hydro Wyman intake vs F-1 bypass on mb-006 (flow_wyman_ vs flow_bypass_)", () => {
   const payload = [
     "time(UTC),error,lowalarm,highalarm,F-1 Reservoir By-pass Ave (Gpm),F2 - Wyman Creek Flow Ave (Gpm)",

@@ -80,7 +80,8 @@ jobs:
       WATER_RIGHTS_SERIAL: ${{ vars.BOOSTER_SERIAL || '' }}
       WATER_RIGHTS_FLOW_METRIC: ${{ vars.BOOSTER_FLOW_METRIC || 'flow_avg' }}
       WATER_RIGHTS_DEVICE_ADDRESS: ${{ vars.BOOSTER_DEVICE_ADDRESS || 'mb-003' }}
-      WATER_RIGHTS_FLOW_SCALE: ${{ vars.BOOSTER_FLOW_SCALE || '4' }}
+      # Booster uses raw GPM (no ×4 calibration; that applies to Wyman only)
+      WATER_RIGHTS_FLOW_SCALE: ${{ vars.BOOSTER_FLOW_SCALE || '1' }}
       BENEFICIAL_USE: ${{ vars.BOOSTER_BENEFICIAL_USE || vars.WATER_RIGHTS_BENEFICIAL_USE || '' }}
       WATER_RIGHT: ${{ vars.BOOSTER_WATER_RIGHT || vars.WATER_RIGHTS_WATER_RIGHT || '' }}
       REDIVERSION_STATUS: ${{ vars.BOOSTER_REDIVERSION_STATUS || vars.WATER_RIGHTS_REDIVERSION_STATUS || '' }}
